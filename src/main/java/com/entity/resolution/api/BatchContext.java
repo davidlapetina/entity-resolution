@@ -3,6 +3,9 @@ package com.entity.resolution.api;
 import com.entity.resolution.core.model.EntityReference;
 import com.entity.resolution.core.model.EntityType;
 import com.entity.resolution.core.model.Relationship;
+import com.entity.resolution.graph.InputSanitizer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,6 +17,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * - Deduplication within the batch (same name resolves to same entity)
  * - Deferred relationship creation (relationships created after all entities resolved)
  * - Transaction-like semantics (all or nothing commitment)
+ * - Max batch size enforcement to prevent memory exhaustion
+ * - Chunked commit for large relationship sets
  *
  * Usage:
  * <pre>
@@ -28,6 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * </pre>
  */
 public class BatchContext implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(BatchContext.class);
 
     private final EntityResolver resolver;
     private final ResolutionOptions options;
@@ -46,11 +52,27 @@ public class BatchContext implements AutoCloseable {
     /**
      * Resolves an entity within this batch context.
      * If the same name was already resolved in this batch, returns the cached result.
+     *
+     * @throws IllegalStateException if the batch size limit has been reached
      */
     public EntityResolutionResult resolve(String entityName, EntityType entityType) {
         checkNotClosed();
+        InputSanitizer.validateEntityName(entityName);
 
         BatchKey key = new BatchKey(entityName, entityType);
+
+        // Check if this is a duplicate (already resolved) - duplicates bypass the size check
+        if (resolvedEntities.containsKey(key)) {
+            return resolvedEntities.get(key);
+        }
+
+        // Enforce max batch size for new entries
+        if (resolvedEntities.size() >= options.getMaxBatchSize()) {
+            throw new IllegalStateException(
+                    "Batch size limit reached (" + options.getMaxBatchSize() +
+                            "). Commit current batch and start a new one.");
+        }
+
         return resolvedEntities.computeIfAbsent(key, k ->
                 resolver.resolve(entityName, entityType, options));
     }
@@ -80,6 +102,7 @@ public class BatchContext implements AutoCloseable {
 
     /**
      * Commits the batch, creating all queued relationships.
+     * Relationships are processed in chunks to manage memory.
      * Returns a summary of the batch operation.
      */
     public BatchResult commit() {
@@ -91,24 +114,47 @@ public class BatchContext implements AutoCloseable {
         List<Relationship> createdRelationships = new ArrayList<>();
         List<String> errors = new ArrayList<>();
 
-        // Create all pending relationships
-        for (PendingRelationship pending : pendingRelationships) {
-            try {
-                Relationship rel = resolver.createRelationship(
-                        pending.source,
-                        pending.target,
-                        pending.relationshipType,
-                        pending.properties
-                );
-                createdRelationships.add(rel);
-            } catch (Exception e) {
-                errors.add("Failed to create relationship " + pending.relationshipType +
-                        " from " + pending.source.getId() + " to " + pending.target.getId() +
-                        ": " + e.getMessage());
+        int totalPending = pendingRelationships.size();
+        int chunkSize = options.getBatchCommitChunkSize();
+
+        if (totalPending > chunkSize) {
+            log.info("Committing {} relationships in chunks of {}", totalPending, chunkSize);
+        }
+
+        // Create pending relationships in chunks
+        for (int offset = 0; offset < totalPending; offset += chunkSize) {
+            int end = Math.min(offset + chunkSize, totalPending);
+            List<PendingRelationship> chunk = pendingRelationships.subList(offset, end);
+
+            int chunkNumber = (offset / chunkSize) + 1;
+            int totalChunks = (int) Math.ceil((double) totalPending / chunkSize);
+
+            if (totalPending > chunkSize) {
+                log.info("Processing relationship chunk {}/{} ({} relationships)",
+                        chunkNumber, totalChunks, chunk.size());
+            }
+
+            for (PendingRelationship pending : chunk) {
+                try {
+                    Relationship rel = resolver.createRelationship(
+                            pending.source,
+                            pending.target,
+                            pending.relationshipType,
+                            pending.properties
+                    );
+                    createdRelationships.add(rel);
+                } catch (Exception e) {
+                    errors.add("Failed to create relationship " + pending.relationshipType +
+                            " from " + pending.source.getId() + " to " + pending.target.getId() +
+                            ": " + e.getMessage());
+                }
             }
         }
 
         committed = true;
+
+        log.info("Batch committed: {} entities resolved, {} relationships created, {} errors",
+                resolvedEntities.size(), createdRelationships.size(), errors.size());
 
         return new BatchResult(
                 resolvedEntities.size(),

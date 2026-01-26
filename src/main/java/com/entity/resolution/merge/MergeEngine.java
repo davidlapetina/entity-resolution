@@ -4,6 +4,7 @@ import com.entity.resolution.audit.AuditAction;
 import com.entity.resolution.audit.AuditService;
 import com.entity.resolution.audit.MergeLedger;
 import com.entity.resolution.core.model.*;
+import com.entity.resolution.graph.CypherExecutor;
 import com.entity.resolution.graph.DuplicateEntityRepository;
 import com.entity.resolution.graph.EntityRepository;
 import com.entity.resolution.graph.RelationshipRepository;
@@ -18,6 +19,7 @@ import java.util.Map;
 /**
  * Engine for orchestrating entity merge operations.
  * Implements the merge algorithm from PRD section 8.
+ * Uses {@link MergeTransaction} for compensating transaction support.
  *
  * Merge process:
  * 1. Candidate discovery (8.1)
@@ -95,6 +97,7 @@ public class MergeEngine {
 
     /**
      * Merges the source entity into the target entity with specified strategy.
+     * Uses a compensating transaction to roll back partial changes on failure.
      */
     public MergeResult merge(String sourceEntityId, String targetEntityId,
                               MatchResult matchResult, String triggeredBy,
@@ -122,43 +125,94 @@ public class MergeEngine {
             return MergeResult.failure(source, target, "Target entity is not active");
         }
 
-        // Step 1: Create synonym for the source's canonical name
-        List<String> synonymsCreated = new ArrayList<>();
-        String synonymId = createSynonymForSourceName(source, target.getId(), matchResult.score());
-        if (synonymId != null) {
-            synonymsCreated.add(synonymId);
+        CypherExecutor executor = entityRepository.getExecutor();
+
+        try (MergeTransaction tx = new MergeTransaction()) {
+            List<String> synonymsCreated = new ArrayList<>();
+            final String[] synonymIdHolder = {null};
+            final String[] duplicateIdHolder = {null};
+
+            // Step 1: Create synonym for the source's canonical name
+            tx.execute("create synonym for source name",
+                    () -> {
+                        String synId = createSynonymForSourceName(source, target.getId(), matchResult.score());
+                        synonymIdHolder[0] = synId;
+                        if (synId != null) {
+                            synonymsCreated.add(synId);
+                        }
+                    },
+                    () -> {
+                        if (synonymIdHolder[0] != null) {
+                            executor.deleteSynonym(synonymIdHolder[0]);
+                        }
+                    }
+            );
+
+            // Step 2: Create duplicate entity record
+            tx.execute("create duplicate record",
+                    () -> {
+                        duplicateIdHolder[0] = createDuplicateRecord(source, target.getId());
+                    },
+                    () -> {
+                        if (duplicateIdHolder[0] != null) {
+                            executor.deleteDuplicateEntity(duplicateIdHolder[0]);
+                        }
+                    }
+            );
+
+            // Step 3: Migrate library-managed relationships
+            if (relationshipRepository != null) {
+                tx.execute("migrate library relationships",
+                        () -> migrateLibraryRelationships(sourceEntityId, targetEntityId),
+                        () -> {
+                            // Best-effort reverse migration
+                            try {
+                                relationshipRepository.migrateRelationships(targetEntityId, sourceEntityId);
+                            } catch (Exception e) {
+                                log.warn("Best-effort relationship reverse-migration failed: {}", e.getMessage());
+                            }
+                        }
+                );
+            }
+
+            // Step 4: Record merge in graph (status change + MERGED_INTO relationship)
+            tx.execute("record merge in graph",
+                    () -> entityRepository.recordMerge(sourceEntityId, targetEntityId,
+                            matchResult.score(), matchResult.reasoning()),
+                    () -> executor.revertMerge(sourceEntityId, targetEntityId)
+            );
+
+            // Step 5: Record in merge ledger (append-only, compensation logs warning)
+            final MergeRecord[] mergeRecordHolder = {null};
+            tx.executeNoCompensation("record in merge ledger",
+                    () -> mergeRecordHolder[0] = mergeLedger.recordMerge(
+                            sourceEntityId, targetEntityId,
+                            source.getCanonicalName(), target.getCanonicalName(),
+                            matchResult.score(), matchResult.decision(),
+                            triggeredBy, matchResult.reasoning()
+                    )
+            );
+
+            // Step 6: Create audit entry (append-only, no compensation)
+            tx.executeNoCompensation("create audit entry",
+                    () -> auditService.record(AuditAction.ENTITY_MERGED, sourceEntityId, triggeredBy, Map.of(
+                            "targetEntityId", targetEntityId,
+                            "confidence", matchResult.score(),
+                            "decision", matchResult.decision().name()
+                    ))
+            );
+
+            tx.markSuccess();
+            log.info("Merge completed: {} -> {}", sourceEntityId, targetEntityId);
+
+            return MergeResult.success(target, source, mergeRecordHolder[0],
+                    synonymsCreated, duplicateIdHolder[0]);
+
+        } catch (Exception e) {
+            log.error("Merge failed and was rolled back: {} -> {} - {}",
+                    sourceEntityId, targetEntityId, e.getMessage());
+            return MergeResult.failure(source, target, "Merge failed: " + e.getMessage());
         }
-
-        // Step 2: Create duplicate entity record
-        String duplicateId = createDuplicateRecord(source, target.getId());
-
-        // Step 3: Migrate library-managed relationships
-        if (relationshipRepository != null) {
-            migrateLibraryRelationships(sourceEntityId, targetEntityId);
-        }
-
-        // Step 4: Record merge in graph (also handles general relationship migration)
-        entityRepository.recordMerge(sourceEntityId, targetEntityId,
-                matchResult.score(), matchResult.reasoning());
-
-        // Step 5: Record in merge ledger
-        MergeRecord mergeRecord = mergeLedger.recordMerge(
-                sourceEntityId, targetEntityId,
-                source.getCanonicalName(), target.getCanonicalName(),
-                matchResult.score(), matchResult.decision(),
-                triggeredBy, matchResult.reasoning()
-        );
-
-        // Step 6: Create audit entry
-        auditService.record(AuditAction.ENTITY_MERGED, sourceEntityId, triggeredBy, Map.of(
-                "targetEntityId", targetEntityId,
-                "confidence", matchResult.score(),
-                "decision", matchResult.decision().name()
-        ));
-
-        log.info("Merge completed: {} -> {}", sourceEntityId, targetEntityId);
-
-        return MergeResult.success(target, source, mergeRecord, synonymsCreated, duplicateId);
     }
 
     /**

@@ -12,6 +12,8 @@ public class ResolutionOptions {
     private static final double DEFAULT_SYNONYM_THRESHOLD = 0.80;
     private static final double DEFAULT_REVIEW_THRESHOLD = 0.60;
     private static final double DEFAULT_LLM_CONFIDENCE_THRESHOLD = 0.85;
+    private static final int DEFAULT_MAX_BATCH_SIZE = 10_000;
+    private static final int DEFAULT_BATCH_COMMIT_CHUNK_SIZE = 1_000;
 
     private final boolean useLLM;
     private final double autoMergeThreshold;
@@ -21,6 +23,8 @@ public class ResolutionOptions {
     private final SimilarityWeights similarityWeights;
     private final String sourceSystem;
     private final boolean autoMergeEnabled;
+    private final int maxBatchSize;
+    private final int batchCommitChunkSize;
 
     private ResolutionOptions(Builder builder) {
         this.useLLM = builder.useLLM;
@@ -31,6 +35,8 @@ public class ResolutionOptions {
         this.similarityWeights = builder.similarityWeights;
         this.sourceSystem = builder.sourceSystem;
         this.autoMergeEnabled = builder.autoMergeEnabled;
+        this.maxBatchSize = builder.maxBatchSize;
+        this.batchCommitChunkSize = builder.batchCommitChunkSize;
     }
 
     public boolean isUseLLM() {
@@ -63,6 +69,14 @@ public class ResolutionOptions {
 
     public boolean isAutoMergeEnabled() {
         return autoMergeEnabled;
+    }
+
+    public int getMaxBatchSize() {
+        return maxBatchSize;
+    }
+
+    public int getBatchCommitChunkSize() {
+        return batchCommitChunkSize;
     }
 
     /**
@@ -104,6 +118,8 @@ public class ResolutionOptions {
         private SimilarityWeights similarityWeights = SimilarityWeights.defaultWeights();
         private String sourceSystem = "SYSTEM";
         private boolean autoMergeEnabled = true;
+        private int maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
+        private int batchCommitChunkSize = DEFAULT_BATCH_COMMIT_CHUNK_SIZE;
 
         public Builder useLLM(boolean useLLM) {
             this.useLLM = useLLM;
@@ -149,6 +165,22 @@ public class ResolutionOptions {
             return this;
         }
 
+        public Builder maxBatchSize(int maxBatchSize) {
+            if (maxBatchSize <= 0) {
+                throw new IllegalArgumentException("maxBatchSize must be positive");
+            }
+            this.maxBatchSize = maxBatchSize;
+            return this;
+        }
+
+        public Builder batchCommitChunkSize(int batchCommitChunkSize) {
+            if (batchCommitChunkSize <= 0) {
+                throw new IllegalArgumentException("batchCommitChunkSize must be positive");
+            }
+            this.batchCommitChunkSize = batchCommitChunkSize;
+            return this;
+        }
+
         public ResolutionOptions build() {
             // Validate threshold ordering
             if (autoMergeThreshold < synonymThreshold) {
@@ -179,6 +211,8 @@ public class ResolutionOptions {
                 ", llmConfidenceThreshold=" + llmConfidenceThreshold +
                 ", autoMergeEnabled=" + autoMergeEnabled +
                 ", sourceSystem='" + sourceSystem + '\'' +
+                ", maxBatchSize=" + maxBatchSize +
+                ", batchCommitChunkSize=" + batchCommitChunkSize +
                 '}';
     }
 }

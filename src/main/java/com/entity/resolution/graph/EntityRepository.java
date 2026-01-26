@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Repository for Entity node CRUD operations.
@@ -92,6 +93,25 @@ public class EntityRepository {
             return entity; // Return original even if merged
         }
         return Optional.of(mapToEntity(results.get(0)));
+    }
+
+    /**
+     * Saves an entity and persists its blocking keys.
+     */
+    public Entity save(Entity entity, Set<String> blockingKeys) {
+        Entity saved = save(entity);
+        if (blockingKeys != null && !blockingKeys.isEmpty()) {
+            executor.createBlockingKeys(saved.getId(), blockingKeys);
+        }
+        return saved;
+    }
+
+    /**
+     * Finds candidate entities that share any of the given blocking keys.
+     */
+    public List<Entity> findCandidatesByBlockingKeys(Set<String> keys, EntityType type) {
+        List<Map<String, Object>> results = executor.findCandidatesByBlockingKeys(keys, type.name());
+        return results.stream().map(this::mapToEntity).toList();
     }
 
     /**

@@ -320,6 +320,96 @@ public class CypherExecutor {
         return connection.query(query, Map.of("entityId", entityId));
     }
 
+    // ========== Blocking Key Operations ==========
+
+    /**
+     * Creates blocking key nodes and links them to an entity.
+     * Uses MERGE to reuse existing BlockingKey nodes.
+     */
+    public void createBlockingKeys(String entityId, java.util.Set<String> keys) {
+        for (String key : keys) {
+            String query = """
+                    MATCH (e:Entity {id: $entityId})
+                    MERGE (bk:BlockingKey {value: $keyValue})
+                    MERGE (e)-[:HAS_BLOCKING_KEY]->(bk)
+                    """;
+            connection.execute(query, Map.of(
+                    "entityId", entityId,
+                    "keyValue", key
+            ));
+        }
+        log.debug("Created {} blocking keys for entity {}", keys.size(), entityId);
+    }
+
+    /**
+     * Finds candidate entities that share any of the given blocking keys.
+     */
+    public List<Map<String, Object>> findCandidatesByBlockingKeys(java.util.Set<String> keys, String entityType) {
+        if (keys.isEmpty()) {
+            return List.of();
+        }
+        String query = """
+                MATCH (e:Entity)-[:HAS_BLOCKING_KEY]->(bk:BlockingKey)
+                WHERE bk.value IN $keys
+                  AND e.type = $entityType
+                  AND e.status = 'ACTIVE'
+                RETURN DISTINCT e.id as id, e.canonicalName as canonicalName,
+                       e.normalizedName as normalizedName, e.type as type,
+                       e.confidenceScore as confidenceScore
+                """;
+        return connection.query(query, Map.of(
+                "keys", new java.util.ArrayList<>(keys),
+                "entityType", entityType
+        ));
+    }
+
+    // ========== Compensating Transaction Support ==========
+
+    /**
+     * Deletes a synonym node and its SYNONYM_OF relationship by synonym ID.
+     * Used as a compensation action during merge rollback.
+     */
+    public void deleteSynonym(String synonymId) {
+        String query = """
+                MATCH (s:Synonym {id: $synonymId})-[r:SYNONYM_OF]->()
+                DELETE r, s
+                """;
+        connection.execute(query, Map.of("synonymId", synonymId));
+        log.debug("Deleted synonym {}", synonymId);
+    }
+
+    /**
+     * Deletes a duplicate entity node and its DUPLICATE_OF relationship by duplicate ID.
+     * Used as a compensation action during merge rollback.
+     */
+    public void deleteDuplicateEntity(String duplicateId) {
+        String query = """
+                MATCH (d:DuplicateEntity {id: $duplicateId})-[r:DUPLICATE_OF]->()
+                DELETE r, d
+                """;
+        connection.execute(query, Map.of("duplicateId", duplicateId));
+        log.debug("Deleted duplicate entity {}", duplicateId);
+    }
+
+    /**
+     * Reverts a merge by setting the source entity status back to ACTIVE
+     * and deleting the MERGED_INTO relationship.
+     * Used as a compensation action during merge rollback.
+     */
+    public void revertMerge(String sourceEntityId, String targetEntityId) {
+        String query = """
+                MATCH (source:Entity {id: $sourceEntityId})-[r:MERGED_INTO]->(target:Entity {id: $targetEntityId})
+                SET source.status = 'ACTIVE'
+                SET source.updatedAt = datetime()
+                DELETE r
+                """;
+        connection.execute(query, Map.of(
+                "sourceEntityId", sourceEntityId,
+                "targetEntityId", targetEntityId
+        ));
+        log.info("Reverted merge: {} -> {}", sourceEntityId, targetEntityId);
+    }
+
     public GraphConnection getConnection() {
         return connection;
     }

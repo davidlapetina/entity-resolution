@@ -4,19 +4,23 @@ import com.entity.resolution.audit.AuditAction;
 import com.entity.resolution.audit.AuditService;
 import com.entity.resolution.core.model.*;
 import com.entity.resolution.graph.EntityRepository;
+import com.entity.resolution.graph.InputSanitizer;
 import com.entity.resolution.graph.SynonymRepository;
 import com.entity.resolution.graph.DuplicateEntityRepository;
 import com.entity.resolution.llm.LLMEnricher;
 import com.entity.resolution.merge.MergeEngine;
 import com.entity.resolution.merge.MergeResult;
 import com.entity.resolution.rules.NormalizationEngine;
+import com.entity.resolution.similarity.BlockingKeyStrategy;
 import com.entity.resolution.similarity.CompositeSimilarityScorer;
+import com.entity.resolution.similarity.DefaultBlockingKeyStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -35,6 +39,7 @@ public class EntityResolutionService {
     private final LLMEnricher llmEnricher;
     private final AuditService auditService;
     private final ResolutionOptions defaultOptions;
+    private final BlockingKeyStrategy blockingKeyStrategy;
 
     public EntityResolutionService(
             EntityRepository entityRepository,
@@ -59,6 +64,22 @@ public class EntityResolutionService {
             LLMEnricher llmEnricher,
             AuditService auditService,
             ResolutionOptions defaultOptions) {
+        this(entityRepository, synonymRepository, duplicateRepository, normalizationEngine,
+                similarityScorer, mergeEngine, llmEnricher, auditService, defaultOptions,
+                new DefaultBlockingKeyStrategy());
+    }
+
+    public EntityResolutionService(
+            EntityRepository entityRepository,
+            SynonymRepository synonymRepository,
+            DuplicateEntityRepository duplicateRepository,
+            NormalizationEngine normalizationEngine,
+            CompositeSimilarityScorer similarityScorer,
+            MergeEngine mergeEngine,
+            LLMEnricher llmEnricher,
+            AuditService auditService,
+            ResolutionOptions defaultOptions,
+            BlockingKeyStrategy blockingKeyStrategy) {
         this.entityRepository = entityRepository;
         this.synonymRepository = synonymRepository;
         this.duplicateRepository = duplicateRepository;
@@ -68,6 +89,7 @@ public class EntityResolutionService {
         this.llmEnricher = llmEnricher;
         this.auditService = auditService;
         this.defaultOptions = defaultOptions;
+        this.blockingKeyStrategy = blockingKeyStrategy;
     }
 
     /**
@@ -82,6 +104,8 @@ public class EntityResolutionService {
      * Resolves an entity name to a canonical entity with custom options.
      */
     public EntityResolutionResult resolve(String entityName, EntityType entityType, ResolutionOptions options) {
+        InputSanitizer.validateEntityName(entityName);
+
         log.info("Resolving entity: '{}' (type: {})", entityName, entityType);
 
         // Step 1: Normalize the input name
@@ -219,12 +243,29 @@ public class EntityResolutionService {
     }
 
     /**
-     * Finds the best fuzzy match among all active entities.
+     * Finds the best fuzzy match among active entities.
+     * Uses blocking keys to narrow candidates first, falling back to full scan
+     * if no blocking key candidates are found.
      */
     private MatchResult findBestFuzzyMatch(String originalName, String normalizedName,
                                             EntityType entityType, ResolutionOptions options) {
-        List<Entity> candidates = entityRepository.findAllActive(entityType);
-        log.debug("Checking {} candidates for fuzzy match", candidates.size());
+        // Try blocking key candidates first
+        Set<String> blockingKeys = blockingKeyStrategy.generateKeys(normalizedName);
+        List<Entity> candidates;
+
+        if (!blockingKeys.isEmpty()) {
+            candidates = entityRepository.findCandidatesByBlockingKeys(blockingKeys, entityType);
+            log.debug("Blocking keys generated {} candidates for fuzzy match", candidates.size());
+
+            if (candidates.isEmpty()) {
+                // Fall back to full scan if no blocking key candidates found
+                candidates = entityRepository.findAllActive(entityType);
+                log.debug("Blocking key fallback: checking {} candidates via full scan", candidates.size());
+            }
+        } else {
+            candidates = entityRepository.findAllActive(entityType);
+            log.debug("No blocking keys generated, checking {} candidates via full scan", candidates.size());
+        }
 
         MatchResult bestMatch = MatchResult.noMatch();
 
@@ -448,7 +489,7 @@ public class EntityResolutionService {
     }
 
     /**
-     * Creates an entity node in the graph.
+     * Creates an entity node in the graph and persists blocking keys.
      */
     private Entity createEntityNode(String canonicalName, String normalizedName,
                                      EntityType entityType, double confidence) {
@@ -458,7 +499,9 @@ public class EntityResolutionService {
                 .type(entityType)
                 .confidenceScore(confidence)
                 .build();
-        return entityRepository.save(entity);
+
+        Set<String> blockingKeys = blockingKeyStrategy.generateKeys(normalizedName);
+        return entityRepository.save(entity, blockingKeys);
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.entity.resolution.api;
 
+import com.entity.resolution.audit.AuditRepository;
 import com.entity.resolution.audit.AuditService;
 import com.entity.resolution.audit.MergeLedger;
 import com.entity.resolution.core.model.*;
@@ -10,7 +11,9 @@ import com.entity.resolution.llm.NoOpLLMProvider;
 import com.entity.resolution.merge.MergeEngine;
 import com.entity.resolution.rules.DefaultNormalizationRules;
 import com.entity.resolution.rules.NormalizationEngine;
+import com.entity.resolution.similarity.BlockingKeyStrategy;
 import com.entity.resolution.similarity.CompositeSimilarityScorer;
+import com.entity.resolution.similarity.DefaultBlockingKeyStrategy;
 import com.entity.resolution.similarity.SimilarityWeights;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -80,8 +83,14 @@ public class EntityResolver implements AutoCloseable {
 
         CompositeSimilarityScorer similarityScorer = new CompositeSimilarityScorer(builder.similarityWeights);
 
-        AuditService auditService = builder.auditService != null
-                ? builder.auditService : new AuditService();
+        AuditService auditService;
+        if (builder.auditService != null) {
+            auditService = builder.auditService;
+        } else if (builder.auditRepository != null) {
+            auditService = new AuditService(builder.auditRepository);
+        } else {
+            auditService = new AuditService();
+        }
 
         MergeLedger mergeLedger = builder.mergeLedger != null
                 ? builder.mergeLedger : new MergeLedger();
@@ -94,11 +103,14 @@ public class EntityResolver implements AutoCloseable {
                 ? builder.llmProvider : new NoOpLLMProvider();
         LLMEnricher llmEnricher = new LLMEnricher(llmProvider, builder.options.getLlmConfidenceThreshold());
 
+        BlockingKeyStrategy blockingKeyStrategy = builder.blockingKeyStrategy != null
+                ? builder.blockingKeyStrategy : new DefaultBlockingKeyStrategy();
+
         // Create main service
         this.service = new EntityResolutionService(
                 entityRepository, synonymRepository, duplicateRepository,
                 normalizationEngine, similarityScorer, mergeEngine, llmEnricher, auditService,
-                builder.options
+                builder.options, blockingKeyStrategy
         );
 
         // Create indexes if requested
@@ -201,6 +213,8 @@ public class EntityResolver implements AutoCloseable {
      */
     public Relationship createRelationship(EntityReference source, EntityReference target,
                                             String relationshipType, Map<String, Object> properties) {
+        InputSanitizer.validateRelationshipType(relationshipType);
+
         // Resolve to current canonical IDs
         String sourceId = source.getId();
         String targetId = target.getId();
@@ -331,7 +345,9 @@ public class EntityResolver implements AutoCloseable {
         private SimilarityWeights similarityWeights = SimilarityWeights.defaultWeights();
         private LLMProvider llmProvider;
         private AuditService auditService;
+        private AuditRepository auditRepository;
         private MergeLedger mergeLedger;
+        private BlockingKeyStrategy blockingKeyStrategy;
         private ResolutionOptions options = ResolutionOptions.defaults();
         private boolean createIndexes = true;
 
@@ -382,6 +398,24 @@ public class EntityResolver implements AutoCloseable {
          */
         public Builder auditService(AuditService auditService) {
             this.auditService = auditService;
+            return this;
+        }
+
+        /**
+         * Sets a custom audit repository for persistence.
+         * If set, the AuditService will use this repository instead of the default in-memory one.
+         */
+        public Builder auditRepository(AuditRepository auditRepository) {
+            this.auditRepository = auditRepository;
+            return this;
+        }
+
+        /**
+         * Sets a custom blocking key strategy for candidate narrowing.
+         * Defaults to {@link DefaultBlockingKeyStrategy} if not set.
+         */
+        public Builder blockingKeyStrategy(BlockingKeyStrategy blockingKeyStrategy) {
+            this.blockingKeyStrategy = blockingKeyStrategy;
             return this;
         }
 

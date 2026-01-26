@@ -4,34 +4,41 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.stream.Collectors;
 
 /**
  * Service for recording and querying audit entries.
- * Provides append-only storage for all auditable operations.
+ * Delegates to an {@link AuditRepository} for persistence.
+ * The no-arg constructor creates an {@link InMemoryAuditRepository} for backward compatibility.
  */
 public class AuditService {
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 
-    private final List<AuditEntry> entries;
+    private final AuditRepository repository;
 
+    /**
+     * Creates an AuditService with in-memory storage (backward compatible).
+     */
     public AuditService() {
-        this.entries = new CopyOnWriteArrayList<>();
+        this(new InMemoryAuditRepository());
+    }
+
+    /**
+     * Creates an AuditService with the specified repository.
+     */
+    public AuditService(AuditRepository repository) {
+        this.repository = repository;
     }
 
     /**
      * Records an audit entry.
      */
     public AuditEntry record(AuditEntry entry) {
-        entries.add(entry);
+        AuditEntry saved = repository.save(entry);
         log.debug("Audit entry recorded: {} for entity {} by {}",
                 entry.action(), entry.entityId(), entry.actorId());
-        return entry;
+        return saved;
     }
 
     /**
@@ -58,62 +65,55 @@ public class AuditService {
      * Gets all audit entries (immutable view).
      */
     public List<AuditEntry> getAllEntries() {
-        return Collections.unmodifiableList(new ArrayList<>(entries));
+        return repository.findAll();
     }
 
     /**
      * Gets audit entries for a specific entity.
      */
     public List<AuditEntry> getEntriesForEntity(String entityId) {
-        return entries.stream()
-                .filter(e -> entityId.equals(e.entityId()))
-                .collect(Collectors.toList());
+        return repository.findByEntityId(entityId);
     }
 
     /**
      * Gets audit entries by action type.
      */
     public List<AuditEntry> getEntriesByAction(AuditAction action) {
-        return entries.stream()
-                .filter(e -> e.action() == action)
-                .collect(Collectors.toList());
+        return repository.findByAction(action);
     }
 
     /**
      * Gets audit entries by actor.
      */
     public List<AuditEntry> getEntriesByActor(String actorId) {
-        return entries.stream()
-                .filter(e -> actorId.equals(e.actorId()))
-                .collect(Collectors.toList());
+        return repository.findByActorId(actorId);
     }
 
     /**
      * Gets audit entries within a time range.
      */
     public List<AuditEntry> getEntriesBetween(Instant start, Instant end) {
-        return entries.stream()
-                .filter(e -> !e.timestamp().isBefore(start) && !e.timestamp().isAfter(end))
-                .collect(Collectors.toList());
+        return repository.findBetween(start, end);
     }
 
     /**
      * Gets the total number of audit entries.
      */
     public int size() {
-        return entries.size();
+        return repository.count();
     }
 
     /**
      * Gets the most recent entries, up to the specified limit.
      */
     public List<AuditEntry> getRecentEntries(int limit) {
-        int size = entries.size();
-        if (size <= limit) {
-            return getAllEntries();
-        }
-        return Collections.unmodifiableList(
-                new ArrayList<>(entries.subList(size - limit, size))
-        );
+        return repository.findRecent(limit);
+    }
+
+    /**
+     * Gets the underlying repository.
+     */
+    public AuditRepository getRepository() {
+        return repository;
     }
 }

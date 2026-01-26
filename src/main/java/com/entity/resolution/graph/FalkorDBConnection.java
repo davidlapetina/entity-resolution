@@ -90,6 +90,15 @@ public class FalkorDBConnection implements GraphConnection {
         safeExecute("CREATE INDEX FOR (d:DuplicateEntity) ON (d.id)");
         safeExecute("CREATE INDEX FOR (d:DuplicateEntity) ON (d.normalizedName)");
 
+        // BlockingKey indexes
+        safeExecute("CREATE INDEX FOR (bk:BlockingKey) ON (bk.value)");
+
+        // AuditEntry indexes
+        safeExecute("CREATE INDEX FOR (a:AuditEntry) ON (a.id)");
+        safeExecute("CREATE INDEX FOR (a:AuditEntry) ON (a.entityId)");
+        safeExecute("CREATE INDEX FOR (a:AuditEntry) ON (a.action)");
+        safeExecute("CREATE INDEX FOR (a:AuditEntry) ON (a.timestamp)");
+
         log.info("Index creation complete");
     }
 
@@ -120,9 +129,24 @@ public class FalkorDBConnection implements GraphConnection {
         if (value == null) {
             return "null";
         }
-        if (value instanceof String) {
+        if (value instanceof List<?> list) {
+            // Format as Cypher list literal for IN queries
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(formatValue(list.get(i)));
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+        if (value instanceof Collection<?> || value instanceof Map<?, ?>) {
+            throw new IllegalArgumentException(
+                    "Collection and Map types (other than List) are not supported as Cypher parameter values");
+        }
+        if (value instanceof String s) {
+            InputSanitizer.sanitizeForCypher(s);
             // Escape single quotes and wrap in quotes
-            return "'" + ((String) value).replace("\\", "\\\\").replace("'", "\\'") + "'";
+            return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'";
         }
         if (value instanceof Number) {
             return value.toString();
@@ -130,7 +154,9 @@ public class FalkorDBConnection implements GraphConnection {
         if (value instanceof Boolean) {
             return value.toString();
         }
-        return "'" + value.toString().replace("\\", "\\\\").replace("'", "\\'") + "'";
+        String str = value.toString();
+        InputSanitizer.sanitizeForCypher(str);
+        return "'" + str.replace("\\", "\\\\").replace("'", "\\'") + "'";
     }
 
     @Override
