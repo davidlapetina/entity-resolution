@@ -5,10 +5,16 @@ import com.entity.resolution.audit.AuditService;
 import com.entity.resolution.audit.MergeLedger;
 import com.entity.resolution.core.model.*;
 import com.entity.resolution.graph.*;
+import com.entity.resolution.health.*;
 import com.entity.resolution.llm.LLMEnricher;
 import com.entity.resolution.llm.LLMProvider;
 import com.entity.resolution.llm.NoOpLLMProvider;
 import com.entity.resolution.merge.MergeEngine;
+import com.entity.resolution.metrics.MetricsService;
+import com.entity.resolution.metrics.NoOpMetricsService;
+import com.entity.resolution.tracing.NoOpTracingService;
+import com.entity.resolution.tracing.Span;
+import com.entity.resolution.tracing.TracingService;
 import com.entity.resolution.rules.DefaultNormalizationRules;
 import com.entity.resolution.rules.NormalizationEngine;
 import com.entity.resolution.similarity.BlockingKeyStrategy;
@@ -70,11 +76,18 @@ public class EntityResolver implements AutoCloseable {
     private final GraphConnection connection;
     private final boolean ownsConnection;
     private final ResolutionOptions defaultOptions;
+    private final MetricsService metricsService;
+    private final TracingService tracingService;
+    private final HealthCheckRegistry healthCheckRegistry;
 
     private EntityResolver(Builder builder) {
         this.connection = builder.connection;
         this.ownsConnection = builder.ownsConnection;
         this.defaultOptions = builder.options;
+        this.metricsService = builder.metricsService != null
+                ? builder.metricsService : new NoOpMetricsService();
+        this.tracingService = builder.tracingService != null
+                ? builder.tracingService : new NoOpTracingService();
 
         // Initialize repositories
         CypherExecutor executor = new CypherExecutor(connection);
@@ -127,12 +140,20 @@ public class EntityResolver implements AutoCloseable {
         this.service = new EntityResolutionService(
                 entityRepository, synonymRepository, duplicateRepository,
                 normalizationEngine, similarityScorer, mergeEngine, llmEnricher, auditService,
-                builder.options, blockingKeyStrategy, cache, lock
+                builder.options, blockingKeyStrategy, cache, lock, metricsService, tracingService
         );
 
         // Create indexes if requested
         if (builder.createIndexes) {
             connection.createIndexes();
+        }
+
+        // Initialize health checks
+        this.healthCheckRegistry = new HealthCheckRegistry();
+        healthCheckRegistry.register(new FalkorDBHealthCheck(connection));
+        healthCheckRegistry.register(new MemoryHealthCheck());
+        if (builder.connectionPool != null) {
+            healthCheckRegistry.register(new ConnectionPoolHealthCheck(builder.connectionPool));
         }
 
         log.info("EntityResolver initialized with graph: {}", connection.getGraphName());
@@ -232,21 +253,28 @@ public class EntityResolver implements AutoCloseable {
                                             String relationshipType, Map<String, Object> properties) {
         InputSanitizer.validateRelationshipType(relationshipType);
 
-        // Resolve to current canonical IDs
-        String sourceId = source.getId();
-        String targetId = target.getId();
+        try (Span span = tracingService.startSpan("entity.createRelationship",
+                Map.of("relationshipType", relationshipType))) {
+            // Resolve to current canonical IDs
+            String sourceId = source.getId();
+            String targetId = target.getId();
 
-        log.debug("Creating relationship {} from {} to {}", relationshipType, sourceId, targetId);
+            span.setAttribute("sourceId", sourceId);
+            span.setAttribute("targetId", targetId);
+            log.debug("Creating relationship {} from {} to {}", relationshipType, sourceId, targetId);
 
-        Relationship relationship = Relationship.builder()
-                .sourceEntityId(sourceId)
-                .targetEntityId(targetId)
-                .relationshipType(relationshipType)
-                .properties(properties)
-                .createdBy(defaultOptions.getSourceSystem())
-                .build();
+            Relationship relationship = Relationship.builder()
+                    .sourceEntityId(sourceId)
+                    .targetEntityId(targetId)
+                    .relationshipType(relationshipType)
+                    .properties(properties)
+                    .createdBy(defaultOptions.getSourceSystem())
+                    .build();
 
-        return relationshipRepository.create(relationship);
+            Relationship created = relationshipRepository.create(relationship);
+            span.setStatus(Span.SpanStatus.OK);
+            return created;
+        }
     }
 
     /**
@@ -314,7 +342,18 @@ public class EntityResolver implements AutoCloseable {
      * Begins a batch context with custom options.
      */
     public BatchContext beginBatch(ResolutionOptions options) {
-        return new BatchContext(this, options);
+        return new BatchContext(this, options, metricsService, tracingService);
+    }
+
+    // ========== Health Check API ==========
+
+    /**
+     * Returns the aggregate health status of all registered health checks.
+     * Automatically includes FalkorDB connectivity and JVM memory checks.
+     * If a connection pool is configured, pool utilization is also checked.
+     */
+    public HealthStatus health() {
+        return healthCheckRegistry.checkAll();
     }
 
     // ========== Service Access ==========
@@ -378,6 +417,8 @@ public class EntityResolver implements AutoCloseable {
         private boolean createIndexes = true;
         private ResolutionCache resolutionCache;
         private DistributedLock distributedLock;
+        private MetricsService metricsService;
+        private TracingService tracingService;
 
         /**
          * Sets the graph connection to use.
@@ -505,6 +546,24 @@ public class EntityResolver implements AutoCloseable {
          */
         public Builder distributedLock(DistributedLock lock) {
             this.distributedLock = lock;
+            return this;
+        }
+
+        /**
+         * Sets a custom metrics service for recording operational metrics.
+         * Defaults to {@link NoOpMetricsService} if not set.
+         */
+        public Builder metricsService(MetricsService metricsService) {
+            this.metricsService = metricsService;
+            return this;
+        }
+
+        /**
+         * Sets a custom tracing service for distributed tracing.
+         * Defaults to {@link NoOpTracingService} if not set.
+         */
+        public Builder tracingService(TracingService tracingService) {
+            this.tracingService = tracingService;
             return this;
         }
 

@@ -3,6 +3,7 @@ package com.entity.resolution.merge;
 import com.entity.resolution.audit.AuditAction;
 import com.entity.resolution.audit.AuditService;
 import com.entity.resolution.audit.MergeLedger;
+import com.entity.resolution.logging.LogContext;
 import com.entity.resolution.cache.MergeListener;
 import com.entity.resolution.core.model.*;
 import com.entity.resolution.graph.CypherExecutor;
@@ -105,7 +106,10 @@ public class MergeEngine {
     public MergeResult merge(String sourceEntityId, String targetEntityId,
                               MatchResult matchResult, String triggeredBy,
                               MergeStrategy strategy) {
-        log.info("Starting merge: {} -> {} (triggered by: {})", sourceEntityId, targetEntityId, triggeredBy);
+        try (LogContext logCtx = LogContext.forMerge(
+                LogContext.generateCorrelationId(), sourceEntityId, targetEntityId)) {
+        log.info("merge.starting sourceEntityId={} targetEntityId={} triggeredBy={}",
+                sourceEntityId, targetEntityId, triggeredBy);
 
         // Validate entities exist and are active
         var sourceOpt = entityRepository.findById(sourceEntityId);
@@ -206,7 +210,8 @@ public class MergeEngine {
             );
 
             tx.markSuccess();
-            log.info("Merge completed: {} -> {}", sourceEntityId, targetEntityId);
+            log.info("merge.completed sourceEntityId={} targetEntityId={} confidence={}",
+                    sourceEntityId, targetEntityId, matchResult.score());
 
             // Notify merge listeners
             notifyMergeListeners(sourceEntityId, targetEntityId);
@@ -215,10 +220,11 @@ public class MergeEngine {
                     synonymsCreated, duplicateIdHolder[0]);
 
         } catch (Exception e) {
-            log.error("Merge failed and was rolled back: {} -> {} - {}",
+            log.error("merge.failed sourceEntityId={} targetEntityId={} error={}",
                     sourceEntityId, targetEntityId, e.getMessage());
             return MergeResult.failure(source, target, "Merge failed: " + e.getMessage());
         }
+        } // end LogContext
     }
 
     /**

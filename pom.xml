@@ -96,6 +96,22 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Metrics (optional) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <version>1.12.2</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Distributed Tracing (optional) -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <version>1.34.1</version>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

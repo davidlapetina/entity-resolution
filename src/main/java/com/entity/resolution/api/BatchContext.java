@@ -4,6 +4,12 @@ import com.entity.resolution.core.model.EntityReference;
 import com.entity.resolution.core.model.EntityType;
 import com.entity.resolution.core.model.Relationship;
 import com.entity.resolution.graph.InputSanitizer;
+import com.entity.resolution.logging.LogContext;
+import com.entity.resolution.metrics.MetricsService;
+import com.entity.resolution.metrics.NoOpMetricsService;
+import com.entity.resolution.tracing.NoOpTracingService;
+import com.entity.resolution.tracing.Span;
+import com.entity.resolution.tracing.TracingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +44,10 @@ public class BatchContext implements AutoCloseable {
 
     private final EntityResolver resolver;
     private final ResolutionOptions options;
+    private final MetricsService metricsService;
+    private final TracingService tracingService;
+    private final Span batchSpan;
+    private final String batchId;
     private boolean memoryWarningIssued = false;
     private final Map<BatchKey, EntityResolutionResult> resolvedEntities;
     private final List<PendingRelationship> pendingRelationships;
@@ -45,8 +55,22 @@ public class BatchContext implements AutoCloseable {
     private boolean closed = false;
 
     BatchContext(EntityResolver resolver, ResolutionOptions options) {
+        this(resolver, options, new NoOpMetricsService(), new NoOpTracingService());
+    }
+
+    BatchContext(EntityResolver resolver, ResolutionOptions options, MetricsService metricsService) {
+        this(resolver, options, metricsService, new NoOpTracingService());
+    }
+
+    BatchContext(EntityResolver resolver, ResolutionOptions options,
+                 MetricsService metricsService, TracingService tracingService) {
         this.resolver = resolver;
         this.options = options != null ? options : ResolutionOptions.defaults();
+        this.metricsService = metricsService != null ? metricsService : new NoOpMetricsService();
+        this.tracingService = tracingService != null ? tracingService : new NoOpTracingService();
+        this.batchId = LogContext.generateCorrelationId();
+        this.batchSpan = this.tracingService.startSpan("entity.batch",
+                Map.of("batchId", this.batchId));
         this.resolvedEntities = new ConcurrentHashMap<>();
         this.pendingRelationships = Collections.synchronizedList(new ArrayList<>());
     }
@@ -116,6 +140,8 @@ public class BatchContext implements AutoCloseable {
             throw new IllegalStateException("Batch already committed");
         }
 
+        try (LogContext logCtx = LogContext.forBatch(batchId)) {
+
         List<Relationship> createdRelationships = new ArrayList<>();
         List<String> errors = new ArrayList<>();
 
@@ -158,8 +184,16 @@ public class BatchContext implements AutoCloseable {
 
         committed = true;
 
-        log.info("Batch committed: {} entities resolved, {} relationships created, {} errors",
-                resolvedEntities.size(), createdRelationships.size(), errors.size());
+        metricsService.recordBatchSize(resolvedEntities.size());
+
+        batchSpan.setAttribute("entitiesResolved", resolvedEntities.size());
+        batchSpan.setAttribute("relationshipsCreated", createdRelationships.size());
+        batchSpan.setAttribute("errors", errors.size());
+        batchSpan.setStatus(errors.isEmpty() ? Span.SpanStatus.OK : Span.SpanStatus.ERROR);
+        batchSpan.close();
+
+        log.info("batch.committed batchId={} entitiesResolved={} relationshipsCreated={} errors={}",
+                batchId, resolvedEntities.size(), createdRelationships.size(), errors.size());
 
         return new BatchResult(
                 resolvedEntities.size(),
@@ -168,6 +202,7 @@ public class BatchContext implements AutoCloseable {
                 createdRelationships.size(),
                 errors
         );
+        } // end LogContext
     }
 
     /**
@@ -177,6 +212,9 @@ public class BatchContext implements AutoCloseable {
     public void rollback() {
         checkNotClosed();
         pendingRelationships.clear();
+        batchSpan.setAttribute("rolledBack", "true");
+        batchSpan.setStatus(Span.SpanStatus.OK);
+        batchSpan.close();
         closed = true;
     }
 

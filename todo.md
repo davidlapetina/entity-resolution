@@ -515,7 +515,7 @@ for (Entity e : all) {
 
 **Current Problem:** No visibility into system behavior. Cannot measure resolution latency, entity creation rate, or identify performance bottlenecks.
 
-- [NOT STARTED] **Add Micrometer dependency to `pom.xml` (optional)**
+- [DONE] **Add Micrometer dependency to `pom.xml` (optional)**
   - Add as optional dependency for applications that want metrics
   - Example:
     ```xml
@@ -527,7 +527,7 @@ for (Entity e : all) {
     </dependency>
     ```
 
-- [NOT STARTED] **Create `MetricsService` interface for recording metrics**
+- [DONE] **Create `MetricsService` interface for recording metrics**
   - Location: `src/main/java/com/entity/resolution/metrics/MetricsService.java`
   - Example:
     ```java
@@ -543,7 +543,7 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Implement `MicrometerMetricsService` with standard metric types**
+- [DONE] **Implement `MicrometerMetricsService` with standard metric types**
   - Location: `src/main/java/com/entity/resolution/metrics/MicrometerMetricsService.java`
   - Example:
     ```java
@@ -561,23 +561,23 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Add timer metric: `entity.resolution.duration` (with tags: entityType, decision)**
+- [DONE] **Add timer metric: `entity.resolution.duration` (with tags: entityType, decision)**
   - Measure end-to-end resolution time
   - Tags: entityType (COMPANY, PERSON), decision (AUTO_MERGE, SYNONYM_ONLY, NO_MATCH)
 
-- [NOT STARTED] **Add counter metrics: `entity.created`, `entity.merged`, `entity.matched.synonym`**
+- [DONE] **Add counter metrics: `entity.created`, `entity.merged`, `entity.matched.synonym`**
   - Track entity lifecycle events
   - Enable alerting on unusual patterns (e.g., spike in merges)
 
-- [NOT STARTED] **Add gauge metrics: `batch.size`, `connection.pool.active`, `cache.size`**
+- [DONE] **Add gauge metrics: `batch.size`, `connection.pool.active`, `cache.size`**
   - Monitor resource utilization
   - Alert on pool exhaustion or cache overflow
 
-- [NOT STARTED] **Add histogram metric: `similarity.score` for match score distribution**
+- [DONE] **Add histogram metric: `similarity.score` for match score distribution**
   - Track distribution of similarity scores
   - Identify tuning opportunities for thresholds
 
-- [NOT STARTED] **Implement `NoOpMetricsService` for when metrics are disabled**
+- [DONE] **Implement `NoOpMetricsService` for when metrics are disabled**
   - Location: `src/main/java/com/entity/resolution/metrics/NoOpMetricsService.java`
   - Empty implementations for all methods
   - Default when Micrometer not on classpath
@@ -588,7 +588,7 @@ for (Entity e : all) {
 
 **Current Problem:** No way to detect FalkorDB failures until first query fails. Load balancers and orchestrators cannot assess service health.
 
-- [NOT STARTED] **Create `HealthCheck` interface with `check()` returning `HealthStatus`**
+- [DONE] **Create `HealthCheck` interface with `check()` returning `HealthStatus`**
   - Location: `src/main/java/com/entity/resolution/health/HealthCheck.java`
   - Example:
     ```java
@@ -605,7 +605,7 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Implement `FalkorDBHealthCheck` verifying graph connectivity**
+- [DONE] **Implement `FalkorDBHealthCheck` verifying graph connectivity**
   - Location: `src/main/java/com/entity/resolution/health/FalkorDBHealthCheck.java`
   - Execute simple query with timeout
   - Example:
@@ -625,7 +625,7 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Implement `MemoryHealthCheck` monitoring heap usage**
+- [DONE] **Implement `MemoryHealthCheck` monitoring heap usage**
   - Location: `src/main/java/com/entity/resolution/health/MemoryHealthCheck.java`
   - Warn at 80% heap usage, fail at 95%
   - Example:
@@ -644,7 +644,7 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Create `HealthCheckRegistry` aggregating all health checks**
+- [DONE] **Create `HealthCheckRegistry` aggregating all health checks**
   - Location: `src/main/java/com/entity/resolution/health/HealthCheckRegistry.java`
   - Aggregate status: UP only if all checks UP, DOWN if any DOWN
   - Example:
@@ -665,11 +665,11 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Add `EntityResolver.health()` method returning aggregate health status**
+- [DONE] **Add `EntityResolver.health()` method returning aggregate health status**
   - Expose health check to library users
   - Example: `HealthStatus status = resolver.health();`
 
-- [NOT STARTED] **Add health check for connection pool exhaustion**
+- [DONE] **Add health check for connection pool exhaustion**
   - Check pool stats: warn if >80% active, fail if 100% active and waiting > threshold
 
 ---
@@ -678,7 +678,7 @@ for (Entity e : all) {
 
 **Current Problem:** Cannot trace resolution flow across components. Debugging complex resolution paths requires manual log correlation.
 
-- [NOT STARTED] **Add OpenTelemetry dependency to `pom.xml` (optional)**
+- [DONE] **Add OpenTelemetry dependency to `pom.xml` (optional)**
   - Example:
     ```xml
     <dependency>
@@ -689,7 +689,7 @@ for (Entity e : all) {
     </dependency>
     ```
 
-- [NOT STARTED] **Create `TracingService` interface for span management**
+- [DONE] **Create `TracingService` interface for span management**
   - Location: `src/main/java/com/entity/resolution/tracing/TracingService.java`
   - Example:
     ```java
@@ -706,12 +706,12 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Implement `OpenTelemetryTracingService` with span creation/propagation**
+- [DONE] **Implement `OpenTelemetryTracingService` with span creation/propagation**
   - Location: `src/main/java/com/entity/resolution/tracing/OpenTelemetryTracingService.java`
   - Create spans for major operations
   - Propagate trace context through async operations
 
-- [NOT STARTED] **Add tracing spans to: `resolve()`, `merge()`, `findBestFuzzyMatch()`, `createRelationship()`**
+- [DONE] **Add tracing spans to: `resolve()`, `merge()`, `findBestFuzzyMatch()`, `createRelationship()`**
   - Wrap key methods with spans
   - Include relevant attributes (entityType, decision, score)
   - Example:
@@ -733,11 +733,11 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Add trace context propagation through `BatchContext`**
+- [DONE] **Add trace context propagation through `BatchContext`**
   - Store trace context in batch
   - Restore context for each operation in batch
 
-- [NOT STARTED] **Implement `NoOpTracingService` for when tracing is disabled**
+- [DONE] **Implement `NoOpTracingService` for when tracing is disabled**
   - Location: `src/main/java/com/entity/resolution/tracing/NoOpTracingService.java`
   - Return no-op spans
   - Default when OpenTelemetry not on classpath
@@ -751,7 +751,7 @@ for (Entity e : all) {
 **Affected Files:**
 - All classes using `log.info()`, `log.debug()`, etc.
 
-- [NOT STARTED] **Create `LogContext` class for MDC (Mapped Diagnostic Context) management**
+- [DONE] **Create `LogContext` class for MDC (Mapped Diagnostic Context) management**
   - Location: `src/main/java/com/entity/resolution/logging/LogContext.java`
   - Example:
     ```java
@@ -770,12 +770,12 @@ for (Entity e : all) {
     }
     ```
 
-- [NOT STARTED] **Add correlation ID generation and propagation**
+- [DONE] **Add correlation ID generation and propagation**
   - Generate UUID for each resolution request
   - Propagate through all nested operations
   - Include in all log statements via MDC
 
-- [NOT STARTED] **Add structured log fields: `entityId`, `entityType`, `operation`, `duration`, `decision`**
+- [DONE] **Add structured log fields: `entityId`, `entityType`, `operation`, `duration`, `decision`**
   - Use key-value pairs in log messages
   - Configure Logback for JSON output (optional)
   - Example:
@@ -784,11 +784,11 @@ for (Entity e : all) {
         result.getEntityId(), type, result.getMatchDecision(), duration);
     ```
 
-- [NOT STARTED] **Refactor existing log statements to use structured format**
+- [DONE] **Refactor existing log statements to use structured format**
   - Audit all log statements in codebase
   - Convert to structured format with consistent field names
 
-- [NOT STARTED] **Add log context to `BatchContext` for batch correlation**
+- [DONE] **Add log context to `BatchContext` for batch correlation**
   - Generate batch correlation ID
   - Include batch ID in all operations within batch
   - Example: `batchId={} operation=resolve index=42/1000`
@@ -801,35 +801,49 @@ for (Entity e : all) {
 
 **Purpose:** Enable integration with non-Java systems and provide web-based administration.
 
-- [NOT STARTED] **Add Spring Boot Web dependency (optional module)**
+- [NOT STARTED] **Add Quarkus REST dependency (optional module)**
   - Create separate Maven module: `entity-resolution-rest`
   - Depend on core library
+  - Use Quarkus REST (RESTEasy Reactive)
   - Example:
     ```xml
     <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-web</artifactId>
-        <version>3.2.2</version>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-resteasy-reactive</artifactId>
     </dependency>
     ```
 
-- [NOT STARTED] **Create `EntityResolutionController` with REST endpoints**
-  - Location: `entity-resolution-rest/src/main/java/.../controller/EntityResolutionController.java`
-  - Use Spring MVC annotations
+- [NOT STARTED] **Create `EntityResolutionResource` with REST endpoints**
+  - Location: `entity-resolution-rest/src/main/java/.../resource/EntityResolutionResource.java`
+  - Use Jakarta REST (JAX-RS) annotations
+  - Use CDI for dependency injection
   - Example:
     ```java
-    @RestController
-    @RequestMapping("/api/v1")
-    public class EntityResolutionController {
-        private final EntityResolver resolver;
+    import jakarta.inject.Inject;
+    import jakarta.ws.rs.Consumes;
+    import jakarta.ws.rs.POST;
+    import jakarta.ws.rs.Path;
+    import jakarta.ws.rs.Produces;
+    import jakarta.ws.rs.core.MediaType;
 
-        @PostMapping("/entities/resolve")
-        public ResponseEntity<ResolutionResponse> resolve(@RequestBody ResolutionRequest request) {
-            EntityResolutionResult result = resolver.resolve(request.name(), request.entityType());
-            return ResponseEntity.ok(ResolutionResponse.from(result));
+    @Path("/api/v1")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public class EntityResolutionResource {
+
+        @Inject
+        EntityResolver resolver;
+
+        @POST
+        @Path("/entities/resolve")
+        public ResolutionResponse resolve(ResolutionRequest request) {
+            EntityResolutionResult result =
+                    resolver.resolve(request.name(), request.entityType());
+            return ResolutionResponse.from(result);
         }
     }
     ```
+
 
 - [NOT STARTED] **Implement `POST /api/v1/entities/resolve` endpoint**
   - Request: `{ "name": "Acme Corp", "entityType": "COMPANY", "options": {...} }`
@@ -852,9 +866,17 @@ for (Entity e : all) {
   - Support filtering by relationship type
   - Support pagination
 
-- [NOT STARTED] **Add OpenAPI/Swagger documentation**
-  - Use springdoc-openapi for automatic documentation
-  - Include request/response schemas
+- [NOT STARTED] **Add OpenAPI / Swagger documentation**
+  - Use Quarkus SmallRye OpenAPI for automatic documentation
+  - Include request/response schemas via Jakarta annotations
+  - Example dependency:
+    ```xml
+    <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-smallrye-openapi</artifactId>
+    </dependency>
+    ```
+
 
 - [NOT STARTED] **Add request validation and error response DTOs**
   - Validate all inputs

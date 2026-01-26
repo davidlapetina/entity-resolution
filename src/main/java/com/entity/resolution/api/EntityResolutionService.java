@@ -12,8 +12,14 @@ import com.entity.resolution.graph.DuplicateEntityRepository;
 import com.entity.resolution.llm.LLMEnricher;
 import com.entity.resolution.lock.DistributedLock;
 import com.entity.resolution.lock.NoOpDistributedLock;
+import com.entity.resolution.logging.LogContext;
 import com.entity.resolution.merge.MergeEngine;
 import com.entity.resolution.merge.MergeResult;
+import com.entity.resolution.metrics.MetricsService;
+import com.entity.resolution.metrics.NoOpMetricsService;
+import com.entity.resolution.tracing.NoOpTracingService;
+import com.entity.resolution.tracing.Span;
+import com.entity.resolution.tracing.TracingService;
 import com.entity.resolution.rules.NormalizationEngine;
 import com.entity.resolution.similarity.BlockingKeyStrategy;
 import com.entity.resolution.similarity.CompositeSimilarityScorer;
@@ -21,6 +27,7 @@ import com.entity.resolution.similarity.DefaultBlockingKeyStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,6 +53,8 @@ public class EntityResolutionService {
     private final BlockingKeyStrategy blockingKeyStrategy;
     private final ResolutionCache resolutionCache;
     private final DistributedLock distributedLock;
+    private final MetricsService metricsService;
+    private final TracingService tracingService;
 
     public EntityResolutionService(
             EntityRepository entityRepository,
@@ -104,6 +113,47 @@ public class EntityResolutionService {
             BlockingKeyStrategy blockingKeyStrategy,
             ResolutionCache resolutionCache,
             DistributedLock distributedLock) {
+        this(entityRepository, synonymRepository, duplicateRepository, normalizationEngine,
+                similarityScorer, mergeEngine, llmEnricher, auditService, defaultOptions,
+                blockingKeyStrategy, resolutionCache, distributedLock,
+                new NoOpMetricsService(), new NoOpTracingService());
+    }
+
+    public EntityResolutionService(
+            EntityRepository entityRepository,
+            SynonymRepository synonymRepository,
+            DuplicateEntityRepository duplicateRepository,
+            NormalizationEngine normalizationEngine,
+            CompositeSimilarityScorer similarityScorer,
+            MergeEngine mergeEngine,
+            LLMEnricher llmEnricher,
+            AuditService auditService,
+            ResolutionOptions defaultOptions,
+            BlockingKeyStrategy blockingKeyStrategy,
+            ResolutionCache resolutionCache,
+            DistributedLock distributedLock,
+            MetricsService metricsService) {
+        this(entityRepository, synonymRepository, duplicateRepository, normalizationEngine,
+                similarityScorer, mergeEngine, llmEnricher, auditService, defaultOptions,
+                blockingKeyStrategy, resolutionCache, distributedLock,
+                metricsService, new NoOpTracingService());
+    }
+
+    public EntityResolutionService(
+            EntityRepository entityRepository,
+            SynonymRepository synonymRepository,
+            DuplicateEntityRepository duplicateRepository,
+            NormalizationEngine normalizationEngine,
+            CompositeSimilarityScorer similarityScorer,
+            MergeEngine mergeEngine,
+            LLMEnricher llmEnricher,
+            AuditService auditService,
+            ResolutionOptions defaultOptions,
+            BlockingKeyStrategy blockingKeyStrategy,
+            ResolutionCache resolutionCache,
+            DistributedLock distributedLock,
+            MetricsService metricsService,
+            TracingService tracingService) {
         this.entityRepository = entityRepository;
         this.synonymRepository = synonymRepository;
         this.duplicateRepository = duplicateRepository;
@@ -116,6 +166,8 @@ public class EntityResolutionService {
         this.blockingKeyStrategy = blockingKeyStrategy;
         this.resolutionCache = resolutionCache != null ? resolutionCache : new NoOpResolutionCache();
         this.distributedLock = distributedLock != null ? distributedLock : new NoOpDistributedLock();
+        this.metricsService = metricsService != null ? metricsService : new NoOpMetricsService();
+        this.tracingService = tracingService != null ? tracingService : new NoOpTracingService();
     }
 
     /**
@@ -132,45 +184,93 @@ public class EntityResolutionService {
     public EntityResolutionResult resolve(String entityName, EntityType entityType, ResolutionOptions options) {
         InputSanitizer.validateEntityName(entityName);
 
-        log.info("Resolving entity: '{}' (type: {})", entityName, entityType);
+        String correlationId = LogContext.generateCorrelationId();
+        long startNanos = System.nanoTime();
+        Span span = tracingService.startSpan("entity.resolve",
+                Map.of("entityType", entityType.name(), "inputName", entityName));
+
+        try (LogContext logCtx = LogContext.forResolution(correlationId, entityType.name())
+                .with("inputName", entityName)) {
+        log.info("entity.resolving inputName={} entityType={}", entityName, entityType);
 
         // Step 1: Normalize the input name
         String normalizedName = normalizationEngine.normalize(entityName, entityType);
-        log.debug("Normalized '{}' to '{}'", entityName, normalizedName);
+        log.debug("entity.normalized inputName={} normalizedName={}", entityName, normalizedName);
 
-        // Step 1.5: Check cache
-        Optional<EntityResolutionResult> cached = resolutionCache.get(normalizedName, entityType);
-        if (cached.isPresent()) {
-            log.debug("Cache hit for '{}' (type: {})", normalizedName, entityType);
-            return cached.get();
-        }
-
-        // Step 1.6: Acquire lock for concurrent safety
-        String lockKey = normalizedName + ":" + entityType.name();
-        boolean lockAcquired = distributedLock.tryLock(lockKey);
         try {
-            if (lockAcquired) {
-                // Re-check cache after acquiring lock (double-check pattern)
-                cached = resolutionCache.get(normalizedName, entityType);
-                if (cached.isPresent()) {
-                    log.debug("Cache hit after lock for '{}' (type: {})", normalizedName, entityType);
-                    return cached.get();
+            // Step 1.5: Check cache
+            Optional<EntityResolutionResult> cached = resolutionCache.get(normalizedName, entityType);
+            if (cached.isPresent()) {
+                log.debug("Cache hit for '{}' (type: {})", normalizedName, entityType);
+                metricsService.recordCacheHit();
+                span.setAttribute("cacheHit", "true");
+                span.setStatus(Span.SpanStatus.OK);
+                return cached.get();
+            }
+            metricsService.recordCacheMiss();
+
+            // Step 1.6: Acquire lock for concurrent safety
+            String lockKey = normalizedName + ":" + entityType.name();
+            boolean lockAcquired = distributedLock.tryLock(lockKey);
+            try {
+                if (lockAcquired) {
+                    // Re-check cache after acquiring lock (double-check pattern)
+                    cached = resolutionCache.get(normalizedName, entityType);
+                    if (cached.isPresent()) {
+                        log.debug("Cache hit after lock for '{}' (type: {})", normalizedName, entityType);
+                        metricsService.recordCacheHit();
+                        span.setAttribute("cacheHit", "true");
+                        span.setStatus(Span.SpanStatus.OK);
+                        return cached.get();
+                    }
+                }
+
+                EntityResolutionResult result = resolveInternal(entityName, normalizedName, entityType, options);
+
+                // Record metrics
+                Duration duration = Duration.ofNanos(System.nanoTime() - startNanos);
+                metricsService.recordResolutionDuration(entityType, result.getDecision(), duration);
+
+                if (result.isNewEntity()) {
+                    metricsService.incrementEntityCreated(entityType);
+                }
+                if (result.wasMerged()) {
+                    metricsService.incrementEntityMerged(entityType);
+                }
+                if (result.wasMatchedViaSynonym()) {
+                    metricsService.incrementSynonymMatched(entityType);
+                }
+
+                // Record span attributes
+                span.setAttribute("decision", result.getDecision().name());
+                span.setAttribute("confidence", String.valueOf(result.getMatchConfidence()));
+                span.setAttribute("isNewEntity", String.valueOf(result.isNewEntity()));
+                span.setStatus(Span.SpanStatus.OK);
+
+                Duration durationForLog = Duration.ofNanos(System.nanoTime() - startNanos);
+                log.info("entity.resolved entityId={} entityType={} decision={} confidence={} durationMs={}",
+                        result.getCanonicalEntity().getId(), entityType, result.getDecision(),
+                        result.getMatchConfidence(), durationForLog.toMillis());
+
+                // Populate cache (skip REVIEW decisions)
+                if (result.getDecision() != MatchDecision.REVIEW) {
+                    resolutionCache.put(normalizedName, entityType, result);
+                }
+
+                return result;
+            } finally {
+                if (lockAcquired) {
+                    distributedLock.unlock(lockKey);
                 }
             }
-
-            EntityResolutionResult result = resolveInternal(entityName, normalizedName, entityType, options);
-
-            // Populate cache (skip REVIEW decisions)
-            if (result.getDecision() != MatchDecision.REVIEW) {
-                resolutionCache.put(normalizedName, entityType, result);
-            }
-
-            return result;
+        } catch (Exception e) {
+            span.recordException(e);
+            span.setStatus(Span.SpanStatus.ERROR);
+            throw e;
         } finally {
-            if (lockAcquired) {
-                distributedLock.unlock(lockKey);
-            }
+            span.close();
         }
+        } // end LogContext
     }
 
     /**
@@ -315,6 +415,9 @@ public class EntityResolutionService {
      */
     private MatchResult findBestFuzzyMatch(String originalName, String normalizedName,
                                             EntityType entityType, ResolutionOptions options) {
+        Span fuzzySpan = tracingService.startSpan("entity.fuzzyMatch",
+                Map.of("entityType", entityType.name(), "normalizedName", normalizedName));
+
         // Try blocking key candidates first
         Set<String> blockingKeys = blockingKeyStrategy.generateKeys(normalizedName);
         List<Entity> candidates;
@@ -337,6 +440,7 @@ public class EntityResolutionService {
 
         for (Entity candidate : candidates) {
             double score = similarityScorer.compute(normalizedName, candidate.getNormalizedName());
+            metricsService.recordSimilarityScore(score);
             if (score > bestMatch.score()) {
                 bestMatch = MatchResult.of(
                         score,
@@ -351,6 +455,10 @@ public class EntityResolutionService {
 
         log.debug("Best fuzzy match: score={}, decision={}, entity={}",
                 bestMatch.score(), bestMatch.decision(), bestMatch.matchedName());
+
+        fuzzySpan.setAttribute("candidateCount", candidates.size());
+        fuzzySpan.setAttribute("bestScore", String.valueOf(bestMatch.score()));
+        fuzzySpan.setAttribute("decision", bestMatch.decision().name());
 
         // Consider LLM enrichment if score is in the uncertain range
         if (options.isUseLLM() && bestMatch.shouldEnrichWithLLM() && llmEnricher.isAvailable()) {
@@ -371,9 +479,13 @@ public class EntityResolutionService {
                             "llmDecision", llmResult.decision().name()
                     ));
 
+            fuzzySpan.setStatus(Span.SpanStatus.OK);
+            fuzzySpan.close();
             return llmResult;
         }
 
+        fuzzySpan.setStatus(Span.SpanStatus.OK);
+        fuzzySpan.close();
         return bestMatch;
     }
 
@@ -633,5 +745,13 @@ public class EntityResolutionService {
 
     public AuditService getAuditService() {
         return auditService;
+    }
+
+    public MetricsService getMetricsService() {
+        return metricsService;
+    }
+
+    public TracingService getTracingService() {
+        return tracingService;
     }
 }
