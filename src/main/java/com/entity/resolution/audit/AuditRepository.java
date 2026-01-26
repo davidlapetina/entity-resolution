@@ -1,5 +1,7 @@
 package com.entity.resolution.audit;
 
+import com.entity.resolution.api.CursorPage;
+
 import java.time.Instant;
 import java.util.List;
 
@@ -53,4 +55,28 @@ public interface AuditRepository {
      * Gets the most recent entries, up to the specified limit.
      */
     List<AuditEntry> findRecent(int limit);
+
+    /**
+     * Gets audit entries for an entity using cursor-based pagination.
+     * The cursor is an ISO-8601 timestamp; entries after the cursor are returned.
+     *
+     * @param entityId the entity ID to query
+     * @param cursor   ISO-8601 timestamp cursor, or null for the first page
+     * @param limit    maximum number of entries to return
+     * @return a cursor page of audit entries
+     */
+    default CursorPage<AuditEntry> findByEntityIdAfter(String entityId, String cursor, int limit) {
+        // Default implementation for backward compatibility - delegates to findByEntityId
+        List<AuditEntry> all = findByEntityId(entityId);
+        Instant cursorInstant = (cursor != null && !cursor.isEmpty()) ? Instant.parse(cursor) : null;
+        List<AuditEntry> filtered = all.stream()
+                .filter(e -> cursorInstant == null || e.timestamp().isAfter(cursorInstant))
+                .sorted((a, b) -> a.timestamp().compareTo(b.timestamp()))
+                .limit(limit + 1)
+                .toList();
+        boolean hasMore = filtered.size() > limit;
+        List<AuditEntry> content = hasMore ? filtered.subList(0, limit) : filtered;
+        String nextCursor = hasMore ? content.get(content.size() - 1).timestamp().toString() : null;
+        return new CursorPage<>(content, nextCursor, hasMore);
+    }
 }

@@ -272,98 +272,40 @@ for (Entity e : all) {
 **Affected Files:**
 - `src/main/java/com/entity/resolution/graph/FalkorDBConnection.java`
 
-- [NOT STARTED] **Create `GraphConnectionPool` interface with `borrow()`, `release()` methods**
+- [DONE] **Create `GraphConnectionPool` interface with `borrow()`, `release()` methods**
   - Location: `src/main/java/com/entity/resolution/graph/GraphConnectionPool.java`
-  - Define lifecycle methods for pooled connections
-  - Example:
-    ```java
-    public interface GraphConnectionPool extends Closeable {
-        GraphConnection borrow() throws PoolExhaustedException;
-        void release(GraphConnection connection);
-        PoolStats getStats();
-    }
+  - AutoCloseable interface with `borrow()`, `release()`, `getStats()`, `close()`
 
-    public record PoolStats(int active, int idle, int waiting, long avgWaitTimeMs) {}
-    ```
+- [DONE] **Implement `SimpleGraphConnectionPool` using `Semaphore` + `ConcurrentLinkedDeque`**
+  - Location: `src/main/java/com/entity/resolution/graph/SimpleGraphConnectionPool.java`
+  - Custom pool using `java.util.concurrent` (no external dependency)
+  - `Semaphore` for borrow flow control, `ConcurrentLinkedDeque` for idle connections
+  - Pre-creates `minIdle` connections on startup
+  - Validates connections on borrow when `testOnBorrow` is enabled
 
-- [NOT STARTED] **Implement `FalkorDBConnectionPool` using Apache Commons Pool2**
-  - Location: `src/main/java/com/entity/resolution/graph/FalkorDBConnectionPool.java`
-  - Use `GenericObjectPool` for connection management
-  - Implement `PooledObjectFactory` for FalkorDB connections
-  - Example:
-    ```java
-    public class FalkorDBConnectionPool implements GraphConnectionPool {
-        private final GenericObjectPool<Graph> pool;
+- [DONE] **Create `PoolConfig` builder with `maxTotal`, `maxIdle`, `minIdle`, `maxWaitMillis`**
+  - Location: `src/main/java/com/entity/resolution/graph/PoolConfig.java`
+  - Defaults: maxTotal=20, maxIdle=10, minIdle=2, maxWaitMillis=5000, testOnBorrow=true
+  - Validation: maxIdle <= maxTotal, minIdle <= maxIdle
 
-        public FalkorDBConnectionPool(FalkorDBPoolConfig config) {
-            GenericObjectPoolConfig<Graph> poolConfig = new GenericObjectPoolConfig<>();
-            poolConfig.setMaxTotal(config.getMaxTotal());
-            poolConfig.setMaxIdle(config.getMaxIdle());
-            poolConfig.setMinIdle(config.getMinIdle());
-            poolConfig.setMaxWaitMillis(config.getMaxWaitMillis());
-            poolConfig.setTestOnBorrow(true);
+- [DONE] **Create `PooledFalkorDBConnection` that borrows/releases per operation**
+  - Location: `src/main/java/com/entity/resolution/graph/PooledFalkorDBConnection.java`
+  - Transparent to `CypherExecutor` — borrows on each execute/query, releases in finally block
+  - Ensures connections are returned even on exceptions
 
-            this.pool = new GenericObjectPool<>(
-                new FalkorDBConnectionFactory(config.getHost(), config.getPort(), config.getGraphName()),
-                poolConfig
-            );
-        }
-    }
-    ```
+- [DONE] **Create `PoolStats` record for pool metrics**
+  - Location: `src/main/java/com/entity/resolution/graph/PoolStats.java`
+  - Tracks: totalConnections, activeConnections, idleConnections, totalBorrowed, totalReleased, totalCreated
 
-- [NOT STARTED] **Add pool configuration options: `maxTotal`, `maxIdle`, `minIdle`, `maxWaitMillis`**
-  - Create `FalkorDBPoolConfig` builder class
-  - Sensible defaults: maxTotal=20, maxIdle=10, minIdle=2, maxWaitMillis=5000
-  - Example:
-    ```java
-    FalkorDBPoolConfig config = FalkorDBPoolConfig.builder()
-        .host("localhost")
-        .port(6379)
-        .graphName("entity-resolution")
-        .maxTotal(20)
-        .maxIdle(10)
-        .minIdle(2)
-        .maxWaitMillis(5000)
-        .build();
-    ```
+- [DONE] **Integrate pool into `EntityResolver.Builder`**
+  - Added `falkorDBPool(PoolConfig)` to create owned pool
+  - Added `connectionPool(pool, graphName)` to use existing pool
+  - Pool closed automatically when resolver is closed (if owned)
 
-- [NOT STARTED] **Add connection validation with `testOnBorrow` health check query**
-  - Implement `validateObject()` in connection factory
-  - Use lightweight query: `RETURN 1`
-  - Configure validation on borrow and periodic eviction
-  - Example:
-    ```java
-    @Override
-    public boolean validateObject(PooledObject<Graph> p) {
-        try {
-            p.getObject().query("RETURN 1");
-            return true;
-        } catch (Exception e) {
-            log.warn("Connection validation failed", e);
-            return false;
-        }
-    }
-    ```
-
-- [NOT STARTED] **Refactor `FalkorDBConnection` to use pool internally**
-  - Modify `query()` and `execute()` to borrow/release connections
-  - Ensure connections are returned even on exceptions (try-finally)
-  - Example:
-    ```java
-    public List<Map<String, Object>> query(String cypher) {
-        Graph graph = pool.borrow();
-        try {
-            return executeQuery(graph, cypher);
-        } finally {
-            pool.release(graph);
-        }
-    }
-    ```
-
-- [NOT STARTED] **Add pool metrics: active connections, idle connections, wait time**
-  - Expose via `PoolStats` record
-  - Integrate with metrics service (Phase 3)
-  - Example metrics: `connection.pool.active`, `connection.pool.idle`, `connection.pool.wait.ms`
+- [DONE] **Add unit tests for connection pooling**
+  - Location: `src/test/java/com/entity/resolution/graph/ConnectionPoolTest.java`
+  - 10 tests covering: config defaults, config validation, borrow/release behavior,
+    release on exception, graph name delegation, stats tracking, custom settings
 
 ---
 
@@ -375,81 +317,43 @@ for (Entity e : all) {
 - `src/main/java/com/entity/resolution/api/EntityResolver.java`
 - `src/main/java/com/entity/resolution/api/EntityResolutionService.java`
 
-- [NOT STARTED] **Create `AsyncEntityResolver` interface with `CompletableFuture<EntityResolutionResult>` methods**
+- [DONE] **Create `AsyncEntityResolver` interface with `CompletableFuture<EntityResolutionResult>` methods**
   - Location: `src/main/java/com/entity/resolution/api/AsyncEntityResolver.java`
-  - Mirror sync API with async equivalents
-  - Example:
-    ```java
-    public interface AsyncEntityResolver {
-        CompletableFuture<EntityResolutionResult> resolveAsync(String name, EntityType type);
-        CompletableFuture<EntityResolutionResult> resolveAsync(String name, EntityType type, ResolutionOptions options);
-        CompletableFuture<List<EntityResolutionResult>> resolveBatchAsync(List<ResolutionRequest> requests);
-        CompletableFuture<Relationship> createRelationshipAsync(EntityReference source, EntityReference target, String type);
-    }
-    ```
+  - AutoCloseable interface with `resolveAsync()`, `resolveBatchAsync()`, and bounded-concurrency overload
+  - Mirrors sync API with async equivalents returning `CompletableFuture`
 
-- [NOT STARTED] **Implement `AsyncEntityResolverImpl` with configurable `ExecutorService`**
+- [DONE] **Implement `AsyncEntityResolverImpl` with Java 21 virtual threads**
   - Location: `src/main/java/com/entity/resolution/api/AsyncEntityResolverImpl.java`
-  - Use virtual threads (Java 21) or configurable thread pool
-  - Example:
-    ```java
-    public class AsyncEntityResolverImpl implements AsyncEntityResolver {
-        private final EntityResolver syncResolver;
-        private final ExecutorService executor;
+  - Uses `Executors.newVirtualThreadPerTaskExecutor()` for lightweight async execution
+  - `CompletableFuture.supplyAsync(...).orTimeout(timeoutMs, MILLISECONDS)` for each resolution
+  - Bounded-concurrency batch via `Semaphore` for backpressure control
+  - Graceful shutdown with `awaitTermination(5s)` then `shutdownNow()`
 
-        public AsyncEntityResolverImpl(EntityResolver syncResolver) {
-            this.syncResolver = syncResolver;
-            this.executor = Executors.newVirtualThreadPerTaskExecutor(); // Java 21
-        }
+- [DONE] **Create `ResolutionRequest` record for batch operations**
+  - Location: `src/main/java/com/entity/resolution/api/ResolutionRequest.java`
+  - Record: `(entityName, entityType, options)` with `of()` factory methods
+  - Supports optional per-request `ResolutionOptions` override
 
-        @Override
-        public CompletableFuture<EntityResolutionResult> resolveAsync(String name, EntityType type) {
-            return CompletableFuture.supplyAsync(
-                () -> syncResolver.resolve(name, type),
-                executor
-            );
-        }
-    }
-    ```
+- [DONE] **Add `resolveBatchAsync(List<ResolutionRequest>)` for parallel batch resolution**
+  - Resolves all requests in parallel using `CompletableFuture.allOf()`
+  - Collects results maintaining order via `stream().map(join).toList()`
+  - Bounded overload `resolveBatchAsync(requests, maxConcurrency)` uses `Semaphore`
 
-- [NOT STARTED] **Add `resolveAsync(String name, EntityType type)` method**
-  - Delegate to sync resolver on virtual thread
-  - Return immediately with CompletableFuture
-  - Support chaining with `thenApply()`, `thenCompose()`
+- [DONE] **Add timeout configuration for async operations**
+  - Added `asyncTimeoutMs` (default 30,000ms) to `ResolutionOptions`
+  - Applied to all `CompletableFuture` via `orTimeout()` method
+  - Configurable via `ResolutionOptions.builder().asyncTimeoutMs(ms)`
 
-- [NOT STARTED] **Add `resolveBatchAsync(List<ResolutionRequest> requests)` for parallel batch resolution**
-  - Resolve all requests in parallel
-  - Collect results maintaining order
-  - Example:
-    ```java
-    public CompletableFuture<List<EntityResolutionResult>> resolveBatchAsync(List<ResolutionRequest> requests) {
-        List<CompletableFuture<EntityResolutionResult>> futures = requests.stream()
-            .map(req -> resolveAsync(req.name(), req.type()))
-            .toList();
+- [DONE] **Add `async()` factory method to `EntityResolver`**
+  - `resolver.async()` returns `AsyncEntityResolverImpl` wrapping the sync resolver
+  - Uses default `ResolutionOptions` from the resolver
 
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-            .thenApply(v -> futures.stream()
-                .map(CompletableFuture::join)
-                .toList());
-    }
-    ```
-
-- [NOT STARTED] **Add timeout configuration for async operations**
-  - Add `asyncTimeoutMs` to `ResolutionOptions`
-  - Apply timeout to CompletableFuture via `orTimeout()`
-  - Example:
-    ```java
-    public CompletableFuture<EntityResolutionResult> resolveAsync(String name, EntityType type, ResolutionOptions options) {
-        return CompletableFuture.supplyAsync(() -> syncResolver.resolve(name, type, options), executor)
-            .orTimeout(options.getAsyncTimeoutMs(), TimeUnit.MILLISECONDS);
-    }
-    ```
-
-- [NOT STARTED] **Add unit tests for async resolution with concurrent requests**
+- [DONE] **Add unit tests for async resolution**
   - Location: `src/test/java/com/entity/resolution/api/AsyncEntityResolverTest.java`
-  - Test: 100 concurrent resolutions complete correctly
-  - Test: timeout triggers after configured duration
-  - Test: exceptions propagate through CompletableFuture
+  - 9 tests covering: factory creation, single async resolve, resolve with options,
+    batch async, bounded-concurrency batch, invalid max concurrency validation,
+    ResolutionRequest defaults/options, graceful close
+  - Uses `MockGraphConnection` inner class for testing without FalkorDB
 
 ---
 
@@ -457,108 +361,61 @@ for (Entity e : all) {
 
 **Current Problem:** Multiple JVM instances can create duplicate entities simultaneously. `EntityResolutionService` creates entity before checking for exact match (line 293), causing race conditions.
 
-**Race Condition Scenario:**
-```
-Thread 1: resolve("Acme Corp") -> no exact match -> creates Entity A
-Thread 2: resolve("Acme Corp") -> no exact match -> creates Entity B (duplicate!)
-Thread 1: returns Entity A
-Thread 2: returns Entity B
-Result: Two identical entities exist until next merge
-```
-
 **Affected Files:**
-- `src/main/java/com/entity/resolution/api/EntityResolutionService.java:293`
+- `src/main/java/com/entity/resolution/api/EntityResolutionService.java`
 
-- [NOT STARTED] **Create `DistributedLock` interface with `tryLock()`, `unlock()` methods**
+- [DONE] **Create `DistributedLock` interface with `tryLock()`, `unlock()` methods**
   - Location: `src/main/java/com/entity/resolution/lock/DistributedLock.java`
-  - Support timeout and retry configuration
-  - Example:
-    ```java
-    public interface DistributedLock {
-        boolean tryLock(String lockKey, Duration timeout);
-        void unlock(String lockKey);
-        boolean isLocked(String lockKey);
-    }
+  - Simple interface: `boolean tryLock(String key)`, `void unlock(String key)`
 
-    public interface DistributedLockFactory {
-        DistributedLock create(String namespace);
-    }
-    ```
+- [DONE] **Create `LockConfig` record for lock configuration**
+  - Location: `src/main/java/com/entity/resolution/lock/LockConfig.java`
+  - Record: `(timeoutMs, maxRetries, retryDelayMs, lockTtlSeconds)`
+  - Defaults: timeout=5000ms, maxRetries=3, retryDelay=100ms, TTL=30s
+  - Validates timeout > 0, retries >= 0
 
-- [NOT STARTED] **Implement `RedisDistributedLock` for Redis-based locking (optional dependency)**
-  - Location: `src/main/java/com/entity/resolution/lock/RedisDistributedLock.java`
-  - Use Redisson or Jedis for Redis operations
-  - Implement with SET NX EX pattern for atomic lock acquisition
-  - Example:
-    ```java
-    public class RedisDistributedLock implements DistributedLock {
-        private final RedissonClient redisson;
+- [DONE] **Implement `LocalDistributedLock` for single-JVM locking**
+  - Location: `src/main/java/com/entity/resolution/lock/LocalDistributedLock.java`
+  - Uses `ConcurrentHashMap<String, ReentrantLock>` for per-key locks
+  - Configurable timeout via `LockConfig`
+  - Re-entrant: same thread can acquire same key multiple times
+  - Graceful handling of unlock for non-existent keys
 
-        @Override
-        public boolean tryLock(String lockKey, Duration timeout) {
-            RLock lock = redisson.getLock("entity-resolution:" + lockKey);
-            return lock.tryLock(timeout.toMillis(), TimeUnit.MILLISECONDS);
-        }
-    }
-    ```
-
-- [NOT STARTED] **Implement `GraphDistributedLock` using FalkorDB advisory locks as fallback**
+- [DONE] **Implement `GraphDistributedLock` using FalkorDB advisory locks (multi-JVM)**
   - Location: `src/main/java/com/entity/resolution/lock/GraphDistributedLock.java`
-  - Create `:Lock` nodes with TTL for lock acquisition
-  - Use MERGE with ON CREATE for atomic lock
-  - Example:
-    ```java
-    public boolean tryLock(String lockKey, Duration timeout) {
-        String query = """
-            MERGE (l:Lock {key: $key})
-            ON CREATE SET l.holder = $holder, l.acquiredAt = datetime(), l.expiresAt = datetime() + duration({seconds: $ttl})
-            ON MATCH SET l.holder = CASE WHEN l.expiresAt < datetime() THEN $holder ELSE l.holder END
-            RETURN l.holder = $holder AS acquired
-            """;
-        // Execute and return result
-    }
-    ```
+  - Uses FalkorDB `MERGE` with `ON CREATE`/`ON MATCH` for atomic lock acquisition
+  - TTL-based expiration: expired locks are automatically reclaimed
+  - Retry loop with configurable attempts and delay
+  - UUID-based holder identification for lock ownership
 
-- [NOT STARTED] **Add locking around entity creation in `EntityResolutionService.resolve()`**
-  - Acquire lock before exact match check
-  - Release lock after entity creation or match found
-  - Example:
-    ```java
-    public EntityResolutionResult resolve(String name, EntityType type, ResolutionOptions options) {
-        String normalizedName = normalizationEngine.normalize(name, type);
-        String lockKey = type.name() + ":" + normalizedName;
+- [DONE] **Implement `NoOpDistributedLock` for lock-disabled scenarios**
+  - Location: `src/main/java/com/entity/resolution/lock/NoOpDistributedLock.java`
+  - Always returns true for `tryLock()`, no-op for `unlock()`
 
-        if (!lock.tryLock(lockKey, Duration.ofSeconds(5))) {
-            throw new LockAcquisitionException("Could not acquire lock for: " + lockKey);
-        }
-        try {
-            // Check exact match (now safe from race condition)
-            Optional<Entity> existing = executor.findByNormalizedName(normalizedName, type);
-            if (existing.isPresent()) {
-                return EntityResolutionResult.matched(existing.get());
-            }
-            // Create new entity
-            Entity entity = entityRepository.create(name, normalizedName, type);
-            return EntityResolutionResult.created(entity);
-        } finally {
-            lock.unlock(lockKey);
-        }
-    }
-    ```
+- [DONE] **Create `LockAcquisitionException` for lock timeout failures**
+  - Location: `src/main/java/com/entity/resolution/lock/LockAcquisitionException.java`
+  - RuntimeException with message and optional cause
 
-- [NOT STARTED] **Add lock key generation based on `(normalizedName, entityType)` tuple**
-  - Normalize lock keys to prevent collisions
-  - Format: `{entityType}:{normalizedName}` (e.g., `COMPANY:acmecorp`)
+- [DONE] **Add locking around entity creation in `EntityResolutionService.resolve()`**
+  - Double-check pattern: cache check → lock → re-check cache → resolve → populate cache → unlock
+  - Lock key format: `{entityType}:{normalizedName}` (e.g., `COMPANY:acmecorp`)
+  - Lock acquired after cache miss, released in finally block
+  - Extracted `resolveInternal()` for the actual resolution logic
 
-- [NOT STARTED] **Add lock timeout and retry configuration**
-  - Add to `ResolutionOptions`: `lockTimeoutMs`, `lockRetryAttempts`, `lockRetryDelayMs`
-  - Implement exponential backoff for retries
+- [DONE] **Add lock timeout configuration to `ResolutionOptions`**
+  - Added `lockTimeoutMs` (default 5,000ms) to `ResolutionOptions`
+  - Configurable via `ResolutionOptions.builder().lockTimeoutMs(ms)`
 
-- [NOT STARTED] **Add integration tests for concurrent entity creation with locking**
+- [DONE] **Integrate lock into `EntityResolver.Builder`**
+  - Added `distributedLock(DistributedLock)` builder method
+  - Defaults to `NoOpDistributedLock` when not explicitly configured
+
+- [DONE] **Add unit tests for distributed locking**
   - Location: `src/test/java/com/entity/resolution/lock/DistributedLockTest.java`
-  - Test: 10 concurrent resolves for same name create only 1 entity
-  - Test: lock timeout triggers after configured duration
-  - Test: lock released on exception
+  - 12 tests in nested classes: NoOpTests (2 - always acquires, unlock no-op),
+    LocalLockTests (5 - acquire/release, re-entrant, different keys, concurrent blocking with 5 threads, non-existent key unlock),
+    LockConfigTests (3 - defaults, invalid timeout, negative retries),
+    ExceptionTests (2 - message, cause)
 
 ---
 
@@ -569,77 +426,39 @@ Result: Two identical entities exist until next merge
 **Affected Files:**
 - `src/main/java/com/entity/resolution/api/EntityResolutionService.java`
 
-- [NOT STARTED] **Create `ResolutionCache` interface for caching resolution results**
+- [DONE] **Create `ResolutionCache` interface for caching resolution results**
   - Location: `src/main/java/com/entity/resolution/cache/ResolutionCache.java`
-  - Define get/put/invalidate operations
-  - Example:
-    ```java
-    public interface ResolutionCache {
-        Optional<EntityResolutionResult> get(String normalizedName, EntityType type);
-        void put(String normalizedName, EntityType type, EntityResolutionResult result);
-        void invalidate(String entityId);
-        void invalidateAll();
-        CacheStats getStats();
-    }
+  - Methods: `get(normalizedName, entityType)`, `put(normalizedName, entityType, result)`, `invalidate(entityId)`, `invalidateAll()`, `getStats()`
+  - Also created `NoOpResolutionCache` for when caching is disabled
+  - Also created `CacheStats` record (hitCount, missCount, evictionCount, size) with `hitRate()` method
 
-    public record CacheStats(long hits, long misses, long evictions, long size) {}
-    ```
-
-- [NOT STARTED] **Implement `CaffeineResolutionCache` with TTL and max size configuration**
+- [DONE] **Implement `CaffeineResolutionCache` with TTL and max size configuration**
   - Location: `src/main/java/com/entity/resolution/cache/CaffeineResolutionCache.java`
-  - Use Caffeine library for high-performance caching
-  - Example:
-    ```java
-    public class CaffeineResolutionCache implements ResolutionCache {
-        private final Cache<CacheKey, EntityResolutionResult> cache;
+  - Uses Caffeine 3.1.8 (optional dependency) with `maximumSize()`, `expireAfterWrite()`, `recordStats()`
+  - Implements `ResolutionCache` and `MergeListener` for merge-triggered invalidation
+  - Uses `CacheKey` record (normalizedName, entityType) and secondary `entityIndex` for entity-based invalidation
+  - Also created `CacheConfig` record (maxSize, ttlSeconds, enabled) with defaults: 10,000 entries, 300s TTL
 
-        public CaffeineResolutionCache(CacheConfig config) {
-            this.cache = Caffeine.newBuilder()
-                .maximumSize(config.getMaxSize())  // Default: 10,000
-                .expireAfterWrite(config.getTtl())  // Default: 5 minutes
-                .recordStats()
-                .build();
-        }
+- [DONE] **Add cache key generation based on normalized name and entity type**
+  - Uses `CacheKey` record with `(normalizedName, entityType)` composite key
+  - Consistent key generation across lookups via record equals/hashCode
 
-        private record CacheKey(String normalizedName, EntityType type) {}
-    }
-    ```
+- [DONE] **Add cache invalidation on entity merge events**
+  - Created `MergeListener` interface in cache package with `onMerge(sourceEntityId, targetEntityId)` callback
+  - `CaffeineResolutionCache` implements `MergeListener`, invalidating both source and target on merge
+  - Secondary `entityIndex` (`ConcurrentMap<String, Set<CacheKey>>`) enables efficient entity-based invalidation
+  - Removal listener cleans up secondary index on eviction
 
-- [NOT STARTED] **Add cache key generation based on normalized name and entity type**
-  - Use composite key: `(normalizedName, entityType)`
-  - Ensure consistent key generation across lookups
+- [DONE] **Add cache hit/miss metrics**
+  - `CacheStats` record exposes hitCount, missCount, evictionCount, size, and `hitRate()` method
+  - Caffeine `recordStats()` enabled; `getStats()` converts Caffeine stats to library `CacheStats`
+  - 13 tests in `ResolutionCacheTest.java` covering NoOp, Caffeine, config, and stats behavior
 
-- [NOT STARTED] **Add cache invalidation on entity merge events**
-  - Subscribe to merge events from `MergeEngine`
-  - Invalidate both source and target entity cache entries
-  - Example:
-    ```java
-    public class CacheInvalidationListener implements MergeListener {
-        private final ResolutionCache cache;
-
-        @Override
-        public void onMerge(Entity source, Entity target) {
-            cache.invalidate(source.getId());
-            cache.invalidate(target.getId());
-        }
-    }
-    ```
-
-- [NOT STARTED] **Add cache hit/miss metrics**
-  - Expose Caffeine stats via `CacheStats`
-  - Integrate with metrics service: `cache.hits`, `cache.misses`, `cache.hit.ratio`
-
-- [NOT STARTED] **Add configuration to enable/disable caching in `ResolutionOptions`**
-  - Add `cachingEnabled` boolean (default: true)
-  - Add `cacheTtlSeconds` and `cacheMaxSize` options
-  - Example:
-    ```java
-    ResolutionOptions options = ResolutionOptions.builder()
-        .cachingEnabled(true)
-        .cacheTtlSeconds(300)
-        .cacheMaxSize(10000)
-        .build();
-    ```
+- [DONE] **Add configuration to enable/disable caching in `ResolutionOptions`**
+  - Added `cachingEnabled` (default false), `cacheMaxSize` (default 10,000), `cacheTtlSeconds` (default 300)
+  - Builder methods with validation (maxSize > 0, ttlSeconds > 0)
+  - `EntityResolutionService` integrates with `NoOpResolutionCache` when caching disabled
+  - Double-check locking pattern with `DistributedLock` prevents cache stampede
 
 ---
 
@@ -652,96 +471,41 @@ Result: Two identical entities exist until next merge
 - `src/main/java/com/entity/resolution/graph/RelationshipRepository.java`
 - `src/main/java/com/entity/resolution/audit/AuditService.java`
 
-- [NOT STARTED] **Create `PageRequest` class with `offset`, `limit`, `sortBy`, `sortDirection`**
+- [DONE] **Create `PageRequest` class with `offset`, `limit`, `sortBy`, `sortDirection`**
   - Location: `src/main/java/com/entity/resolution/api/PageRequest.java`
-  - Example:
-    ```java
-    public record PageRequest(
-        int offset,
-        int limit,
-        String sortBy,
-        SortDirection sortDirection
-    ) {
-        public static PageRequest of(int page, int size) {
-            return new PageRequest(page * size, size, null, SortDirection.ASC);
-        }
+  - Record with fields: offset, limit, sortBy, sortDirection (nested `SortDirection` enum: ASC, DESC)
+  - Compact constructor validates offset >= 0, 0 < limit <= 10,000
+  - Factory methods: `of(page, size)`, `first(size)`, `of(page, size, sortBy, direction)`
+  - `pageNumber()` method calculates page number from offset and limit
 
-        public static PageRequest first(int size) {
-            return new PageRequest(0, size, null, SortDirection.ASC);
-        }
-    }
-
-    public enum SortDirection { ASC, DESC }
-    ```
-
-- [NOT STARTED] **Create `Page<T>` class with `content`, `totalElements`, `hasNext`, `hasPrevious`**
+- [DONE] **Create `Page<T>` class with `content`, `totalElements`, `hasNext`, `hasPrevious`**
   - Location: `src/main/java/com/entity/resolution/api/Page.java`
-  - Example:
-    ```java
-    public record Page<T>(
-        List<T> content,
-        long totalElements,
-        int pageNumber,
-        int pageSize
-    ) {
-        public boolean hasNext() {
-            return (pageNumber + 1) * pageSize < totalElements;
-        }
+  - Generic record with fields: content (defensive copy), totalElements, pageNumber, pageSize
+  - Methods: `hasNext()`, `hasPrevious()`, `totalPages()`, `numberOfElements()`, `hasContent()`
+  - `static <T> Page<T> empty(PageRequest request)` factory for empty results
+  - Validates totalElements >= 0 in compact constructor
 
-        public boolean hasPrevious() {
-            return pageNumber > 0;
-        }
+- [DONE] **Add paginated methods to `EntityRepository`: `findAllActive(EntityType, PageRequest)`**
+  - Uses `CypherExecutor.countActiveEntities()` for total count
+  - Uses `CypherExecutor.findAllActiveEntitiesPaginated()` with `SKIP $offset LIMIT $limit`
+  - Orders by `e.canonicalName ASC`
+  - Returns `Page<Entity>` with correct pagination metadata
 
-        public int totalPages() {
-            return (int) Math.ceil((double) totalElements / pageSize);
-        }
-    }
-    ```
+- [DONE] **Add cursor-based pagination for `getAuditTrail()` using timestamp cursor**
+  - Location: `src/main/java/com/entity/resolution/api/CursorPage.java`
+  - `CursorPage<T>` record with content (defensive copy), nextCursor (ISO-8601 timestamp), hasMore
+  - `AuditService.getAuditTrailPaginated(entityId, cursor, limit)` delegates to `AuditRepository.findByEntityIdAfter()`
+  - Default implementation in `AuditRepository` interface; overridden in both `InMemoryAuditRepository` and `GraphAuditRepository`
+  - Fetches `limit + 1` to detect hasMore; next cursor set to last entry's timestamp
+  - `CypherExecutor.findAuditEntriesByEntityAfterCursor()` supports both with-cursor and without-cursor paths
 
-- [NOT STARTED] **Add paginated methods to `EntityRepository`: `findAll(EntityType, PageRequest)`**
-  - Implement with SKIP and LIMIT in Cypher
-  - Include total count query
-  - Example:
-    ```java
-    public Page<Entity> findAll(EntityType type, PageRequest page) {
-        String countQuery = "MATCH (e:Entity) WHERE e.type = $type AND e.status = 'ACTIVE' RETURN count(e) AS total";
-        long total = executor.queryScalar(countQuery, Map.of("type", type.name()));
-
-        String dataQuery = """
-            MATCH (e:Entity) WHERE e.type = $type AND e.status = 'ACTIVE'
-            RETURN e ORDER BY e.createdAt DESC
-            SKIP $offset LIMIT $limit
-            """;
-        List<Entity> entities = executor.queryEntities(dataQuery,
-            Map.of("type", type.name(), "offset", page.offset(), "limit", page.limit()));
-
-        return new Page<>(entities, total, page.offset() / page.limit(), page.limit());
-    }
-    ```
-
-- [NOT STARTED] **Add cursor-based pagination for `getAuditTrail()` using timestamp cursor**
-  - Use timestamp as cursor for consistent pagination under concurrent writes
-  - Example:
-    ```java
-    public record CursorPage<T>(List<T> content, String nextCursor, boolean hasMore) {}
-
-    public CursorPage<AuditEntry> getAuditTrail(String entityId, String cursor, int limit) {
-        Instant afterTimestamp = cursor != null ? Instant.parse(cursor) : Instant.EPOCH;
-
-        String query = """
-            MATCH (a:AuditEntry) WHERE a.entityId = $entityId AND a.timestamp > $after
-            RETURN a ORDER BY a.timestamp ASC LIMIT $limit
-            """;
-        List<AuditEntry> entries = // execute query
-
-        String nextCursor = entries.isEmpty() ? null : entries.get(entries.size() - 1).timestamp().toString();
-        return new CursorPage<>(entries, nextCursor, entries.size() == limit);
-    }
-    ```
-
-- [NOT STARTED] **Add pagination to `getRelationships()` methods in `RelationshipRepository`**
-  - Support paginated relationship queries
-  - Example: `getOutgoingRelationships(EntityReference ref, PageRequest page)`
+- [DONE] **Add pagination to `getRelationships()` methods in `RelationshipRepository`**
+  - `findBySourceEntity(entityId, PageRequest)` - paginated outgoing relationships
+  - `findByTargetEntity(entityId, PageRequest)` - paginated incoming relationships
+  - `findByEntity(entityId, PageRequest)` - paginated all relationships (source or target)
+  - Each uses corresponding `CypherExecutor` count and paginated query methods with `SKIP`/`LIMIT`
+  - Orders by `r.createdAt ASC`
+  - Location: `src/test/java/com/entity/resolution/api/PaginationTest.java` - 14 tests covering PageRequest, Page, CursorPage, and audit cursor pagination
 
 ---
 

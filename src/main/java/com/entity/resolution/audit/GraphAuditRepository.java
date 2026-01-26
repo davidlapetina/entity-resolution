@@ -1,5 +1,6 @@
 package com.entity.resolution.audit;
 
+import com.entity.resolution.api.CursorPage;
 import com.entity.resolution.graph.GraphConnection;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -170,6 +171,40 @@ public class GraphAuditRepository implements AuditRepository {
         List<AuditEntry> reversed = new ArrayList<>(results);
         java.util.Collections.reverse(reversed);
         return reversed;
+    }
+
+    @Override
+    public CursorPage<AuditEntry> findByEntityIdAfter(String entityId, String cursor, int limit) {
+        // Fetch limit + 1 to detect if there are more results
+        int fetchLimit = limit + 1;
+        String query;
+        Map<String, Object> params;
+        if (cursor != null && !cursor.isEmpty()) {
+            query = """
+                    MATCH (a:AuditEntry)
+                    WHERE a.entityId = $entityId AND a.timestamp > $cursor
+                    RETURN a.id as id, a.action as action, a.entityId as entityId,
+                           a.actorId as actorId, a.details as details, a.timestamp as timestamp
+                    ORDER BY a.timestamp ASC
+                    LIMIT $limit
+                    """;
+            params = Map.of("entityId", entityId, "cursor", cursor, "limit", fetchLimit);
+        } else {
+            query = """
+                    MATCH (a:AuditEntry)
+                    WHERE a.entityId = $entityId
+                    RETURN a.id as id, a.action as action, a.entityId as entityId,
+                           a.actorId as actorId, a.details as details, a.timestamp as timestamp
+                    ORDER BY a.timestamp ASC
+                    LIMIT $limit
+                    """;
+            params = Map.of("entityId", entityId, "limit", fetchLimit);
+        }
+        List<AuditEntry> results = mapResults(connection.query(query, params));
+        boolean hasMore = results.size() > limit;
+        List<AuditEntry> content = hasMore ? results.subList(0, limit) : results;
+        String nextCursor = hasMore ? content.get(content.size() - 1).timestamp().toString() : null;
+        return new CursorPage<>(content, nextCursor, hasMore);
     }
 
     private List<AuditEntry> mapResults(List<Map<String, Object>> rows) {

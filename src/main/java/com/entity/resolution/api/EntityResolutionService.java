@@ -2,12 +2,16 @@ package com.entity.resolution.api;
 
 import com.entity.resolution.audit.AuditAction;
 import com.entity.resolution.audit.AuditService;
+import com.entity.resolution.cache.NoOpResolutionCache;
+import com.entity.resolution.cache.ResolutionCache;
 import com.entity.resolution.core.model.*;
 import com.entity.resolution.graph.EntityRepository;
 import com.entity.resolution.graph.InputSanitizer;
 import com.entity.resolution.graph.SynonymRepository;
 import com.entity.resolution.graph.DuplicateEntityRepository;
 import com.entity.resolution.llm.LLMEnricher;
+import com.entity.resolution.lock.DistributedLock;
+import com.entity.resolution.lock.NoOpDistributedLock;
 import com.entity.resolution.merge.MergeEngine;
 import com.entity.resolution.merge.MergeResult;
 import com.entity.resolution.rules.NormalizationEngine;
@@ -40,6 +44,8 @@ public class EntityResolutionService {
     private final AuditService auditService;
     private final ResolutionOptions defaultOptions;
     private final BlockingKeyStrategy blockingKeyStrategy;
+    private final ResolutionCache resolutionCache;
+    private final DistributedLock distributedLock;
 
     public EntityResolutionService(
             EntityRepository entityRepository,
@@ -80,6 +86,24 @@ public class EntityResolutionService {
             AuditService auditService,
             ResolutionOptions defaultOptions,
             BlockingKeyStrategy blockingKeyStrategy) {
+        this(entityRepository, synonymRepository, duplicateRepository, normalizationEngine,
+                similarityScorer, mergeEngine, llmEnricher, auditService, defaultOptions,
+                blockingKeyStrategy, new NoOpResolutionCache(), new NoOpDistributedLock());
+    }
+
+    public EntityResolutionService(
+            EntityRepository entityRepository,
+            SynonymRepository synonymRepository,
+            DuplicateEntityRepository duplicateRepository,
+            NormalizationEngine normalizationEngine,
+            CompositeSimilarityScorer similarityScorer,
+            MergeEngine mergeEngine,
+            LLMEnricher llmEnricher,
+            AuditService auditService,
+            ResolutionOptions defaultOptions,
+            BlockingKeyStrategy blockingKeyStrategy,
+            ResolutionCache resolutionCache,
+            DistributedLock distributedLock) {
         this.entityRepository = entityRepository;
         this.synonymRepository = synonymRepository;
         this.duplicateRepository = duplicateRepository;
@@ -90,6 +114,8 @@ public class EntityResolutionService {
         this.auditService = auditService;
         this.defaultOptions = defaultOptions;
         this.blockingKeyStrategy = blockingKeyStrategy;
+        this.resolutionCache = resolutionCache != null ? resolutionCache : new NoOpResolutionCache();
+        this.distributedLock = distributedLock != null ? distributedLock : new NoOpDistributedLock();
     }
 
     /**
@@ -112,6 +138,46 @@ public class EntityResolutionService {
         String normalizedName = normalizationEngine.normalize(entityName, entityType);
         log.debug("Normalized '{}' to '{}'", entityName, normalizedName);
 
+        // Step 1.5: Check cache
+        Optional<EntityResolutionResult> cached = resolutionCache.get(normalizedName, entityType);
+        if (cached.isPresent()) {
+            log.debug("Cache hit for '{}' (type: {})", normalizedName, entityType);
+            return cached.get();
+        }
+
+        // Step 1.6: Acquire lock for concurrent safety
+        String lockKey = normalizedName + ":" + entityType.name();
+        boolean lockAcquired = distributedLock.tryLock(lockKey);
+        try {
+            if (lockAcquired) {
+                // Re-check cache after acquiring lock (double-check pattern)
+                cached = resolutionCache.get(normalizedName, entityType);
+                if (cached.isPresent()) {
+                    log.debug("Cache hit after lock for '{}' (type: {})", normalizedName, entityType);
+                    return cached.get();
+                }
+            }
+
+            EntityResolutionResult result = resolveInternal(entityName, normalizedName, entityType, options);
+
+            // Populate cache (skip REVIEW decisions)
+            if (result.getDecision() != MatchDecision.REVIEW) {
+                resolutionCache.put(normalizedName, entityType, result);
+            }
+
+            return result;
+        } finally {
+            if (lockAcquired) {
+                distributedLock.unlock(lockKey);
+            }
+        }
+    }
+
+    /**
+     * Internal resolution logic, separated for cache/lock integration.
+     */
+    private EntityResolutionResult resolveInternal(String entityName, String normalizedName,
+                                                     EntityType entityType, ResolutionOptions options) {
         // Create canonical ID resolver for this resolution context
         Supplier<String> canonicalIdResolver = () -> resolveCanonicalId(entityName, entityType);
 

@@ -414,6 +414,177 @@ public class CypherExecutor {
         return connection;
     }
 
+    // ========== Paginated Queries ==========
+
+    /**
+     * Count all active entities of a given type.
+     */
+    public long countActiveEntities(String entityType) {
+        String query = """
+                MATCH (e:Entity)
+                WHERE e.type = $entityType
+                  AND e.status = 'ACTIVE'
+                RETURN count(e) as total
+                """;
+        List<Map<String, Object>> results = connection.query(query, Map.of("entityType", entityType));
+        if (results.isEmpty()) {
+            return 0;
+        }
+        return ((Number) results.get(0).get("total")).longValue();
+    }
+
+    /**
+     * Find all active entities of a given type with pagination.
+     */
+    public List<Map<String, Object>> findAllActiveEntitiesPaginated(String entityType, int offset, int limit) {
+        String query = """
+                MATCH (e:Entity)
+                WHERE e.type = $entityType
+                  AND e.status = 'ACTIVE'
+                RETURN e.id as id, e.canonicalName as canonicalName, e.normalizedName as normalizedName,
+                       e.type as type, e.confidenceScore as confidenceScore
+                ORDER BY e.canonicalName ASC
+                SKIP $offset LIMIT $limit
+                """;
+        return connection.query(query, Map.of(
+                "entityType", entityType,
+                "offset", offset,
+                "limit", limit
+        ));
+    }
+
+    /**
+     * Count relationships where entity is the source.
+     */
+    public long countRelationshipsBySource(String entityId) {
+        String query = """
+                MATCH (source:Entity {id: $entityId})-[r:LIBRARY_REL]->(target:Entity)
+                RETURN count(r) as total
+                """;
+        List<Map<String, Object>> results = connection.query(query, Map.of("entityId", entityId));
+        if (results.isEmpty()) {
+            return 0;
+        }
+        return ((Number) results.get(0).get("total")).longValue();
+    }
+
+    /**
+     * Find relationships where entity is the source with pagination.
+     */
+    public List<Map<String, Object>> findRelationshipsBySourcePaginated(String entityId, int offset, int limit) {
+        String query = """
+                MATCH (source:Entity {id: $entityId})-[r:LIBRARY_REL]->(target:Entity)
+                RETURN r.id as id, source.id as sourceEntityId, target.id as targetEntityId,
+                       r.type as relationshipType, r.createdAt as createdAt, r.createdBy as createdBy
+                ORDER BY r.createdAt ASC
+                SKIP $offset LIMIT $limit
+                """;
+        return connection.query(query, Map.of(
+                "entityId", entityId,
+                "offset", offset,
+                "limit", limit
+        ));
+    }
+
+    /**
+     * Count relationships where entity is the target.
+     */
+    public long countRelationshipsByTarget(String entityId) {
+        String query = """
+                MATCH (source:Entity)-[r:LIBRARY_REL]->(target:Entity {id: $entityId})
+                RETURN count(r) as total
+                """;
+        List<Map<String, Object>> results = connection.query(query, Map.of("entityId", entityId));
+        if (results.isEmpty()) {
+            return 0;
+        }
+        return ((Number) results.get(0).get("total")).longValue();
+    }
+
+    /**
+     * Find relationships where entity is the target with pagination.
+     */
+    public List<Map<String, Object>> findRelationshipsByTargetPaginated(String entityId, int offset, int limit) {
+        String query = """
+                MATCH (source:Entity)-[r:LIBRARY_REL]->(target:Entity {id: $entityId})
+                RETURN r.id as id, source.id as sourceEntityId, target.id as targetEntityId,
+                       r.type as relationshipType, r.createdAt as createdAt, r.createdBy as createdBy
+                ORDER BY r.createdAt ASC
+                SKIP $offset LIMIT $limit
+                """;
+        return connection.query(query, Map.of(
+                "entityId", entityId,
+                "offset", offset,
+                "limit", limit
+        ));
+    }
+
+    /**
+     * Count all relationships involving an entity (as source or target).
+     */
+    public long countRelationshipsByEntity(String entityId) {
+        String query = """
+                MATCH (source:Entity)-[r:LIBRARY_REL]->(target:Entity)
+                WHERE source.id = $entityId OR target.id = $entityId
+                RETURN count(r) as total
+                """;
+        List<Map<String, Object>> results = connection.query(query, Map.of("entityId", entityId));
+        if (results.isEmpty()) {
+            return 0;
+        }
+        return ((Number) results.get(0).get("total")).longValue();
+    }
+
+    /**
+     * Find all relationships involving an entity with pagination.
+     */
+    public List<Map<String, Object>> findRelationshipsByEntityPaginated(String entityId, int offset, int limit) {
+        String query = """
+                MATCH (source:Entity)-[r:LIBRARY_REL]->(target:Entity)
+                WHERE source.id = $entityId OR target.id = $entityId
+                RETURN r.id as id, source.id as sourceEntityId, target.id as targetEntityId,
+                       r.type as relationshipType, r.createdAt as createdAt, r.createdBy as createdBy
+                ORDER BY r.createdAt ASC
+                SKIP $offset LIMIT $limit
+                """;
+        return connection.query(query, Map.of(
+                "entityId", entityId,
+                "offset", offset,
+                "limit", limit
+        ));
+    }
+
+    /**
+     * Find audit entries by entity ID using cursor-based pagination.
+     * Cursor is an ISO-8601 timestamp string; entries after the cursor are returned.
+     */
+    public List<Map<String, Object>> findAuditEntriesByEntityAfterCursor(String entityId, String cursor, int limit) {
+        String query;
+        Map<String, Object> params;
+        if (cursor != null && !cursor.isEmpty()) {
+            query = """
+                    MATCH (a:AuditEntry)
+                    WHERE a.entityId = $entityId AND a.timestamp > $cursor
+                    RETURN a.id as id, a.action as action, a.entityId as entityId,
+                           a.actorId as actorId, a.details as details, a.timestamp as timestamp
+                    ORDER BY a.timestamp ASC
+                    LIMIT $limit
+                    """;
+            params = Map.of("entityId", entityId, "cursor", cursor, "limit", limit);
+        } else {
+            query = """
+                    MATCH (a:AuditEntry)
+                    WHERE a.entityId = $entityId
+                    RETURN a.id as id, a.action as action, a.entityId as entityId,
+                           a.actorId as actorId, a.details as details, a.timestamp as timestamp
+                    ORDER BY a.timestamp ASC
+                    LIMIT $limit
+                    """;
+            params = Map.of("entityId", entityId, "limit", limit);
+        }
+        return connection.query(query, params);
+    }
+
     // ========== Library-Managed Relationships ==========
 
     /**

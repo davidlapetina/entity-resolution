@@ -1,5 +1,6 @@
 package com.entity.resolution.audit;
 
+import com.entity.resolution.api.CursorPage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -102,6 +103,18 @@ public class AuditService {
      */
     public List<AuditEntry> getAuditTrail(String entityId, Instant from, Instant to) {
         return repository.findByEntityIdBetween(entityId, from, to);
+    }
+
+    /**
+     * Gets the audit trail for a specific entity using cursor-based pagination.
+     *
+     * @param entityId the entity ID
+     * @param cursor   ISO-8601 timestamp cursor, or null for the first page
+     * @param limit    maximum number of entries to return
+     * @return a cursor page of audit entries
+     */
+    public CursorPage<AuditEntry> getAuditTrailPaginated(String entityId, String cursor, int limit) {
+        return repository.findByEntityIdAfter(entityId, cursor, limit);
     }
 
     /**

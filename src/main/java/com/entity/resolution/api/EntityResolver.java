@@ -15,6 +15,12 @@ import com.entity.resolution.similarity.BlockingKeyStrategy;
 import com.entity.resolution.similarity.CompositeSimilarityScorer;
 import com.entity.resolution.similarity.DefaultBlockingKeyStrategy;
 import com.entity.resolution.similarity.SimilarityWeights;
+import com.entity.resolution.cache.CacheConfig;
+import com.entity.resolution.cache.MergeListener;
+import com.entity.resolution.cache.ResolutionCache;
+import com.entity.resolution.cache.NoOpResolutionCache;
+import com.entity.resolution.lock.DistributedLock;
+import com.entity.resolution.lock.NoOpDistributedLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -106,11 +112,22 @@ public class EntityResolver implements AutoCloseable {
         BlockingKeyStrategy blockingKeyStrategy = builder.blockingKeyStrategy != null
                 ? builder.blockingKeyStrategy : new DefaultBlockingKeyStrategy();
 
+        // Initialize cache and lock
+        ResolutionCache cache = builder.resolutionCache != null
+                ? builder.resolutionCache : new NoOpResolutionCache();
+        DistributedLock lock = builder.distributedLock != null
+                ? builder.distributedLock : new NoOpDistributedLock();
+
+        // Register cache as merge listener if it implements MergeListener
+        if (cache instanceof MergeListener mergeListener) {
+            mergeEngine.addMergeListener(mergeListener);
+        }
+
         // Create main service
         this.service = new EntityResolutionService(
                 entityRepository, synonymRepository, duplicateRepository,
                 normalizationEngine, similarityScorer, mergeEngine, llmEnricher, auditService,
-                builder.options, blockingKeyStrategy
+                builder.options, blockingKeyStrategy, cache, lock
         );
 
         // Create indexes if requested
@@ -323,6 +340,14 @@ public class EntityResolver implements AutoCloseable {
         return relationshipRepository;
     }
 
+    /**
+     * Creates an {@link AsyncEntityResolver} wrapping this resolver.
+     * Uses Java 21 virtual threads for lightweight async execution.
+     */
+    public AsyncEntityResolver async() {
+        return new AsyncEntityResolverImpl(this, defaultOptions);
+    }
+
     @Override
     public void close() {
         if (ownsConnection && connection != null) {
@@ -341,6 +366,7 @@ public class EntityResolver implements AutoCloseable {
     public static class Builder {
         private GraphConnection connection;
         private boolean ownsConnection = false;
+        private GraphConnectionPool connectionPool;
         private NormalizationEngine normalizationEngine;
         private SimilarityWeights similarityWeights = SimilarityWeights.defaultWeights();
         private LLMProvider llmProvider;
@@ -350,6 +376,8 @@ public class EntityResolver implements AutoCloseable {
         private BlockingKeyStrategy blockingKeyStrategy;
         private ResolutionOptions options = ResolutionOptions.defaults();
         private boolean createIndexes = true;
+        private ResolutionCache resolutionCache;
+        private DistributedLock distributedLock;
 
         /**
          * Sets the graph connection to use.
@@ -366,6 +394,27 @@ public class EntityResolver implements AutoCloseable {
         public Builder falkorDB(String host, int port, String graphName) {
             this.connection = new FalkorDBConnection(host, port, graphName);
             this.ownsConnection = true;
+            return this;
+        }
+
+        /**
+         * Creates a pooled FalkorDB connection using the given pool configuration.
+         * The pool is owned by this resolver and will be closed when the resolver is closed.
+         */
+        public Builder falkorDBPool(PoolConfig poolConfig) {
+            this.connectionPool = new SimpleGraphConnectionPool(poolConfig);
+            this.connection = new PooledFalkorDBConnection(this.connectionPool, poolConfig.getGraphName());
+            this.ownsConnection = true;
+            return this;
+        }
+
+        /**
+         * Uses an existing connection pool.
+         */
+        public Builder connectionPool(GraphConnectionPool pool, String graphName) {
+            this.connectionPool = pool;
+            this.connection = new PooledFalkorDBConnection(pool, graphName);
+            this.ownsConnection = false;
             return this;
         }
 
@@ -440,6 +489,22 @@ public class EntityResolver implements AutoCloseable {
          */
         public Builder createIndexes(boolean createIndexes) {
             this.createIndexes = createIndexes;
+            return this;
+        }
+
+        /**
+         * Sets a custom resolution cache.
+         */
+        public Builder cache(ResolutionCache cache) {
+            this.resolutionCache = cache;
+            return this;
+        }
+
+        /**
+         * Sets a custom distributed lock.
+         */
+        public Builder distributedLock(DistributedLock lock) {
+            this.distributedLock = lock;
             return this;
         }
 

@@ -6,6 +6,9 @@ import com.entity.resolution.core.model.EntityType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.entity.resolution.api.Page;
+import com.entity.resolution.api.PageRequest;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -68,6 +71,17 @@ public class EntityRepository {
     public List<Entity> findAllActive(EntityType type) {
         List<Map<String, Object>> results = executor.findAllActiveEntities(type.name());
         return results.stream().map(this::mapToEntity).toList();
+    }
+
+    /**
+     * Finds all active entities of a given type with pagination.
+     */
+    public Page<Entity> findAllActive(EntityType type, PageRequest pageRequest) {
+        long total = executor.countActiveEntities(type.name());
+        List<Map<String, Object>> results = executor.findAllActiveEntitiesPaginated(
+                type.name(), pageRequest.offset(), pageRequest.limit());
+        List<Entity> entities = results.stream().map(this::mapToEntity).toList();
+        return new Page<>(entities, total, pageRequest.pageNumber(), pageRequest.limit());
     }
 
     /**

@@ -15,6 +15,10 @@ public class ResolutionOptions {
     private static final int DEFAULT_MAX_BATCH_SIZE = 10_000;
     private static final int DEFAULT_BATCH_COMMIT_CHUNK_SIZE = 1_000;
     private static final long DEFAULT_MAX_BATCH_MEMORY_BYTES = 100L * 1_000_000; // 100MB
+    private static final int DEFAULT_CACHE_MAX_SIZE = 10_000;
+    private static final int DEFAULT_CACHE_TTL_SECONDS = 300;
+    private static final long DEFAULT_LOCK_TIMEOUT_MS = 5_000;
+    private static final long DEFAULT_ASYNC_TIMEOUT_MS = 30_000;
 
     private final boolean useLLM;
     private final double autoMergeThreshold;
@@ -28,6 +32,13 @@ public class ResolutionOptions {
     private final int batchCommitChunkSize;
     private final long maxBatchMemoryBytes;
 
+    // Scalability options
+    private final boolean cachingEnabled;
+    private final int cacheMaxSize;
+    private final int cacheTtlSeconds;
+    private final long lockTimeoutMs;
+    private final long asyncTimeoutMs;
+
     private ResolutionOptions(Builder builder) {
         this.useLLM = builder.useLLM;
         this.autoMergeThreshold = builder.autoMergeThreshold;
@@ -40,6 +51,11 @@ public class ResolutionOptions {
         this.maxBatchSize = builder.maxBatchSize;
         this.batchCommitChunkSize = builder.batchCommitChunkSize;
         this.maxBatchMemoryBytes = builder.maxBatchMemoryBytes;
+        this.cachingEnabled = builder.cachingEnabled;
+        this.cacheMaxSize = builder.cacheMaxSize;
+        this.cacheTtlSeconds = builder.cacheTtlSeconds;
+        this.lockTimeoutMs = builder.lockTimeoutMs;
+        this.asyncTimeoutMs = builder.asyncTimeoutMs;
     }
 
     public boolean isUseLLM() {
@@ -86,6 +102,26 @@ public class ResolutionOptions {
         return maxBatchMemoryBytes;
     }
 
+    public boolean isCachingEnabled() {
+        return cachingEnabled;
+    }
+
+    public int getCacheMaxSize() {
+        return cacheMaxSize;
+    }
+
+    public int getCacheTtlSeconds() {
+        return cacheTtlSeconds;
+    }
+
+    public long getLockTimeoutMs() {
+        return lockTimeoutMs;
+    }
+
+    public long getAsyncTimeoutMs() {
+        return asyncTimeoutMs;
+    }
+
     /**
      * Creates default options.
      */
@@ -128,6 +164,11 @@ public class ResolutionOptions {
         private int maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
         private int batchCommitChunkSize = DEFAULT_BATCH_COMMIT_CHUNK_SIZE;
         private long maxBatchMemoryBytes = DEFAULT_MAX_BATCH_MEMORY_BYTES;
+        private boolean cachingEnabled = false;
+        private int cacheMaxSize = DEFAULT_CACHE_MAX_SIZE;
+        private int cacheTtlSeconds = DEFAULT_CACHE_TTL_SECONDS;
+        private long lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS;
+        private long asyncTimeoutMs = DEFAULT_ASYNC_TIMEOUT_MS;
 
         public Builder useLLM(boolean useLLM) {
             this.useLLM = useLLM;
@@ -197,6 +238,43 @@ public class ResolutionOptions {
             return this;
         }
 
+        public Builder cachingEnabled(boolean cachingEnabled) {
+            this.cachingEnabled = cachingEnabled;
+            return this;
+        }
+
+        public Builder cacheMaxSize(int cacheMaxSize) {
+            if (cacheMaxSize <= 0) {
+                throw new IllegalArgumentException("cacheMaxSize must be positive");
+            }
+            this.cacheMaxSize = cacheMaxSize;
+            return this;
+        }
+
+        public Builder cacheTtlSeconds(int cacheTtlSeconds) {
+            if (cacheTtlSeconds <= 0) {
+                throw new IllegalArgumentException("cacheTtlSeconds must be positive");
+            }
+            this.cacheTtlSeconds = cacheTtlSeconds;
+            return this;
+        }
+
+        public Builder lockTimeoutMs(long lockTimeoutMs) {
+            if (lockTimeoutMs <= 0) {
+                throw new IllegalArgumentException("lockTimeoutMs must be positive");
+            }
+            this.lockTimeoutMs = lockTimeoutMs;
+            return this;
+        }
+
+        public Builder asyncTimeoutMs(long asyncTimeoutMs) {
+            if (asyncTimeoutMs <= 0) {
+                throw new IllegalArgumentException("asyncTimeoutMs must be positive");
+            }
+            this.asyncTimeoutMs = asyncTimeoutMs;
+            return this;
+        }
+
         public ResolutionOptions build() {
             // Validate threshold ordering
             if (autoMergeThreshold < synonymThreshold) {
@@ -230,6 +308,11 @@ public class ResolutionOptions {
                 ", maxBatchSize=" + maxBatchSize +
                 ", batchCommitChunkSize=" + batchCommitChunkSize +
                 ", maxBatchMemoryBytes=" + maxBatchMemoryBytes +
+                ", cachingEnabled=" + cachingEnabled +
+                ", cacheMaxSize=" + cacheMaxSize +
+                ", cacheTtlSeconds=" + cacheTtlSeconds +
+                ", lockTimeoutMs=" + lockTimeoutMs +
+                ", asyncTimeoutMs=" + asyncTimeoutMs +
                 '}';
     }
 }

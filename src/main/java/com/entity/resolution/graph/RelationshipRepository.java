@@ -1,5 +1,7 @@
 package com.entity.resolution.graph;
 
+import com.entity.resolution.api.Page;
+import com.entity.resolution.api.PageRequest;
 import com.entity.resolution.core.model.Relationship;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,6 +91,42 @@ public class RelationshipRepository {
         return executor.findRelationshipsBetween(sourceEntityId, targetEntityId).stream()
                 .map(this::mapToRelationship)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Finds relationships where entity is the source, with pagination.
+     */
+    public Page<Relationship> findBySourceEntity(String entityId, PageRequest pageRequest) {
+        long total = executor.countRelationshipsBySource(entityId);
+        List<Relationship> items = executor.findRelationshipsBySourcePaginated(
+                entityId, pageRequest.offset(), pageRequest.limit()).stream()
+                .map(this::mapToRelationship)
+                .collect(Collectors.toList());
+        return new Page<>(items, total, pageRequest.pageNumber(), pageRequest.limit());
+    }
+
+    /**
+     * Finds relationships where entity is the target, with pagination.
+     */
+    public Page<Relationship> findByTargetEntity(String entityId, PageRequest pageRequest) {
+        long total = executor.countRelationshipsByTarget(entityId);
+        List<Relationship> items = executor.findRelationshipsByTargetPaginated(
+                entityId, pageRequest.offset(), pageRequest.limit()).stream()
+                .map(this::mapToRelationship)
+                .collect(Collectors.toList());
+        return new Page<>(items, total, pageRequest.pageNumber(), pageRequest.limit());
+    }
+
+    /**
+     * Finds all relationships involving an entity, with pagination.
+     */
+    public Page<Relationship> findByEntity(String entityId, PageRequest pageRequest) {
+        long total = executor.countRelationshipsByEntity(entityId);
+        List<Relationship> items = executor.findRelationshipsByEntityPaginated(
+                entityId, pageRequest.offset(), pageRequest.limit()).stream()
+                .map(this::mapToRelationship)
+                .collect(Collectors.toList());
+        return new Page<>(items, total, pageRequest.pageNumber(), pageRequest.limit());
     }
 
     /**

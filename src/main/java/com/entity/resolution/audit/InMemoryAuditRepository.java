@@ -1,5 +1,7 @@
 package com.entity.resolution.audit;
 
+import com.entity.resolution.api.CursorPage;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -77,5 +79,20 @@ public class InMemoryAuditRepository implements AuditRepository {
         return Collections.unmodifiableList(
                 new ArrayList<>(entries.subList(size - limit, size))
         );
+    }
+
+    @Override
+    public CursorPage<AuditEntry> findByEntityIdAfter(String entityId, String cursor, int limit) {
+        Instant cursorInstant = (cursor != null && !cursor.isEmpty()) ? Instant.parse(cursor) : null;
+        List<AuditEntry> filtered = entries.stream()
+                .filter(e -> entityId.equals(e.entityId()))
+                .filter(e -> cursorInstant == null || e.timestamp().isAfter(cursorInstant))
+                .sorted((a, b) -> a.timestamp().compareTo(b.timestamp()))
+                .limit(limit + 1)
+                .toList();
+        boolean hasMore = filtered.size() > limit;
+        List<AuditEntry> content = hasMore ? filtered.subList(0, limit) : filtered;
+        String nextCursor = hasMore ? content.get(content.size() - 1).timestamp().toString() : null;
+        return new CursorPage<>(content, nextCursor, hasMore);
     }
 }

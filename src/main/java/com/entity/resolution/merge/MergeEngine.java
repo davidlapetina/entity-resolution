@@ -3,6 +3,7 @@ package com.entity.resolution.merge;
 import com.entity.resolution.audit.AuditAction;
 import com.entity.resolution.audit.AuditService;
 import com.entity.resolution.audit.MergeLedger;
+import com.entity.resolution.cache.MergeListener;
 import com.entity.resolution.core.model.*;
 import com.entity.resolution.graph.CypherExecutor;
 import com.entity.resolution.graph.DuplicateEntityRepository;
@@ -15,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Engine for orchestrating entity merge operations.
@@ -38,6 +40,7 @@ public class MergeEngine {
     private final MergeLedger mergeLedger;
     private final AuditService auditService;
     private final MergeStrategy defaultStrategy;
+    private final List<MergeListener> mergeListeners = new CopyOnWriteArrayList<>();
 
     /**
      * Creates a MergeEngine without relationship repository (legacy support).
@@ -205,6 +208,9 @@ public class MergeEngine {
             tx.markSuccess();
             log.info("Merge completed: {} -> {}", sourceEntityId, targetEntityId);
 
+            // Notify merge listeners
+            notifyMergeListeners(sourceEntityId, targetEntityId);
+
             return MergeResult.success(target, source, mergeRecordHolder[0],
                     synonymsCreated, duplicateIdHolder[0]);
 
@@ -321,6 +327,25 @@ public class MergeEngine {
      */
     public List<String> getMergedEntityIds(String canonicalEntityId) {
         return mergeLedger.getMergeChain(canonicalEntityId);
+    }
+
+    /**
+     * Adds a listener that will be notified after successful merges.
+     */
+    public void addMergeListener(MergeListener listener) {
+        if (listener != null) {
+            mergeListeners.add(listener);
+        }
+    }
+
+    private void notifyMergeListeners(String sourceEntityId, String targetEntityId) {
+        for (MergeListener listener : mergeListeners) {
+            try {
+                listener.onMerge(sourceEntityId, targetEntityId);
+            } catch (Exception e) {
+                log.warn("Merge listener notification failed: {}", e.getMessage());
+            }
+        }
     }
 
     public MergeLedger getMergeLedger() {
