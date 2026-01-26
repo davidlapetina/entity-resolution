@@ -14,6 +14,7 @@ public class ResolutionOptions {
     private static final double DEFAULT_LLM_CONFIDENCE_THRESHOLD = 0.85;
     private static final int DEFAULT_MAX_BATCH_SIZE = 10_000;
     private static final int DEFAULT_BATCH_COMMIT_CHUNK_SIZE = 1_000;
+    private static final long DEFAULT_MAX_BATCH_MEMORY_BYTES = 100L * 1_000_000; // 100MB
 
     private final boolean useLLM;
     private final double autoMergeThreshold;
@@ -25,6 +26,7 @@ public class ResolutionOptions {
     private final boolean autoMergeEnabled;
     private final int maxBatchSize;
     private final int batchCommitChunkSize;
+    private final long maxBatchMemoryBytes;
 
     private ResolutionOptions(Builder builder) {
         this.useLLM = builder.useLLM;
@@ -37,6 +39,7 @@ public class ResolutionOptions {
         this.autoMergeEnabled = builder.autoMergeEnabled;
         this.maxBatchSize = builder.maxBatchSize;
         this.batchCommitChunkSize = builder.batchCommitChunkSize;
+        this.maxBatchMemoryBytes = builder.maxBatchMemoryBytes;
     }
 
     public boolean isUseLLM() {
@@ -77,6 +80,10 @@ public class ResolutionOptions {
 
     public int getBatchCommitChunkSize() {
         return batchCommitChunkSize;
+    }
+
+    public long getMaxBatchMemoryBytes() {
+        return maxBatchMemoryBytes;
     }
 
     /**
@@ -120,6 +127,7 @@ public class ResolutionOptions {
         private boolean autoMergeEnabled = true;
         private int maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
         private int batchCommitChunkSize = DEFAULT_BATCH_COMMIT_CHUNK_SIZE;
+        private long maxBatchMemoryBytes = DEFAULT_MAX_BATCH_MEMORY_BYTES;
 
         public Builder useLLM(boolean useLLM) {
             this.useLLM = useLLM;
@@ -181,6 +189,14 @@ public class ResolutionOptions {
             return this;
         }
 
+        public Builder maxBatchMemoryBytes(long maxBatchMemoryBytes) {
+            if (maxBatchMemoryBytes <= 0) {
+                throw new IllegalArgumentException("maxBatchMemoryBytes must be positive");
+            }
+            this.maxBatchMemoryBytes = maxBatchMemoryBytes;
+            return this;
+        }
+
         public ResolutionOptions build() {
             // Validate threshold ordering
             if (autoMergeThreshold < synonymThreshold) {
@@ -213,6 +229,7 @@ public class ResolutionOptions {
                 ", sourceSystem='" + sourceSystem + '\'' +
                 ", maxBatchSize=" + maxBatchSize +
                 ", batchCommitChunkSize=" + batchCommitChunkSize +
+                ", maxBatchMemoryBytes=" + maxBatchMemoryBytes +
                 '}';
     }
 }

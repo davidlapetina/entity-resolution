@@ -128,6 +128,22 @@ public class GraphAuditRepository implements AuditRepository {
     }
 
     @Override
+    public List<AuditEntry> findByEntityIdBetween(String entityId, Instant start, Instant end) {
+        String query = """
+                MATCH (a:AuditEntry)
+                WHERE a.entityId = $entityId AND a.timestamp >= $start AND a.timestamp <= $end
+                RETURN a.id as id, a.action as action, a.entityId as entityId,
+                       a.actorId as actorId, a.details as details, a.timestamp as timestamp
+                ORDER BY a.timestamp ASC
+                """;
+        return mapResults(connection.query(query, Map.of(
+                "entityId", entityId,
+                "start", start.toString(),
+                "end", end.toString()
+        )));
+    }
+
+    @Override
     public int count() {
         String query = """
                 MATCH (a:AuditEntry)

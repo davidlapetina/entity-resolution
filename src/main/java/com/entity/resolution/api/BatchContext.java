@@ -34,9 +34,11 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class BatchContext implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(BatchContext.class);
+    private static final long ESTIMATED_BYTES_PER_ENTITY = 500L;
 
     private final EntityResolver resolver;
     private final ResolutionOptions options;
+    private boolean memoryWarningIssued = false;
     private final Map<BatchKey, EntityResolutionResult> resolvedEntities;
     private final List<PendingRelationship> pendingRelationships;
     private boolean committed = false;
@@ -73,8 +75,11 @@ public class BatchContext implements AutoCloseable {
                             "). Commit current batch and start a new one.");
         }
 
-        return resolvedEntities.computeIfAbsent(key, k ->
+        EntityResolutionResult result = resolvedEntities.computeIfAbsent(key, k ->
                 resolver.resolve(entityName, entityType, options));
+
+        checkMemory();
+        return result;
     }
 
     /**
@@ -198,9 +203,27 @@ public class BatchContext implements AutoCloseable {
         return pendingRelationships.size();
     }
 
+    /**
+     * Returns the estimated heap usage in bytes for entities in this batch.
+     */
+    public long getEstimatedMemoryUsage() {
+        return resolvedEntities.size() * ESTIMATED_BYTES_PER_ENTITY;
+    }
+
     private void checkNotClosed() {
         if (closed) {
             throw new IllegalStateException("Batch context is closed");
+        }
+    }
+
+    private void checkMemory() {
+        long estimatedUsage = resolvedEntities.size() * ESTIMATED_BYTES_PER_ENTITY;
+        long maxMemory = options.getMaxBatchMemoryBytes();
+        if (!memoryWarningIssued && estimatedUsage > maxMemory * 0.8) {
+            log.warn("Batch approaching memory limit: estimated {}MB / {}MB ({} entities). " +
+                            "Consider committing and starting a new batch.",
+                    estimatedUsage / 1_000_000, maxMemory / 1_000_000, resolvedEntities.size());
+            memoryWarningIssued = true;
         }
     }
 

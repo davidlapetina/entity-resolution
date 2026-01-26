@@ -159,6 +159,23 @@ class GraphAuditRepositoryTest {
     }
 
     @Test
+    void findByEntityIdBetween_queriesWithEntityIdAndTimeRange() {
+        connection.queryResults = List.of(
+                Map.of("id", "a1", "action", "ENTITY_MERGED", "entityId", "e1",
+                        "actorId", "actor1", "details", "{}", "timestamp", "2024-01-15T10:30:00Z")
+        );
+
+        List<AuditEntry> results = repository.findByEntityIdBetween("e1",
+                Instant.parse("2024-01-15T00:00:00Z"), Instant.parse("2024-01-16T00:00:00Z"));
+
+        assertEquals(1, results.size());
+        assertEquals("e1", results.get(0).entityId());
+        // Verify the query included entityId and time range params
+        assertTrue(connection.executedParams.stream()
+                .anyMatch(p -> "e1".equals(p.get("entityId")) && p.containsKey("start") && p.containsKey("end")));
+    }
+
+    @Test
     void createIndexes_calledOnConstruction() {
         // Index creation happens in constructor; verify queries
         assertTrue(connection.executedQueries.stream()

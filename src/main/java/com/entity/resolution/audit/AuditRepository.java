@@ -40,6 +40,11 @@ public interface AuditRepository {
     List<AuditEntry> findBetween(Instant start, Instant end);
 
     /**
+     * Gets audit entries for a specific entity within a time range.
+     */
+    List<AuditEntry> findByEntityIdBetween(String entityId, Instant start, Instant end);
+
+    /**
      * Gets the total number of audit entries.
      */
     int count();

@@ -56,6 +56,14 @@ public class InMemoryAuditRepository implements AuditRepository {
     }
 
     @Override
+    public List<AuditEntry> findByEntityIdBetween(String entityId, Instant start, Instant end) {
+        return entries.stream()
+                .filter(e -> entityId.equals(e.entityId()))
+                .filter(e -> !e.timestamp().isBefore(start) && !e.timestamp().isAfter(end))
+                .collect(Collectors.toList());
+    }
+
+    @Override
     public int count() {
         return entries.size();
     }

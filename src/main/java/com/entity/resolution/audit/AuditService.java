@@ -97,6 +97,14 @@ public class AuditService {
     }
 
     /**
+     * Gets the audit trail for a specific entity within a time range.
+     * Supports compliance reporting by filtering on entity ID and date range.
+     */
+    public List<AuditEntry> getAuditTrail(String entityId, Instant from, Instant to) {
+        return repository.findByEntityIdBetween(entityId, from, to);
+    }
+
+    /**
      * Gets the total number of audit entries.
      */
     public int size() {
