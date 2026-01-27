@@ -62,7 +62,7 @@ public class EntityRepository {
     public List<Entity> findByNormalizedName(String normalizedName, EntityType type) {
         List<Map<String, Object>> results = executor.findCandidatesByNormalizedName(
                 normalizedName, type.name());
-        return results.stream().map(this::mapToEntity).toList();
+        return results.stream().map(EntityRepository::mapToEntity).toList();
     }
 
     /**
@@ -70,7 +70,7 @@ public class EntityRepository {
      */
     public List<Entity> findAllActive(EntityType type) {
         List<Map<String, Object>> results = executor.findAllActiveEntities(type.name());
-        return results.stream().map(this::mapToEntity).toList();
+        return results.stream().map(EntityRepository::mapToEntity).toList();
     }
 
     /**
@@ -80,7 +80,7 @@ public class EntityRepository {
         long total = executor.countActiveEntities(type.name());
         List<Map<String, Object>> results = executor.findAllActiveEntitiesPaginated(
                 type.name(), pageRequest.offset(), pageRequest.limit());
-        List<Entity> entities = results.stream().map(this::mapToEntity).toList();
+        List<Entity> entities = results.stream().map(EntityRepository::mapToEntity).toList();
         return new Page<>(entities, total, pageRequest.pageNumber(), pageRequest.limit());
     }
 
@@ -125,7 +125,7 @@ public class EntityRepository {
      */
     public List<Entity> findCandidatesByBlockingKeys(Set<String> keys, EntityType type) {
         List<Map<String, Object>> results = executor.findCandidatesByBlockingKeys(keys, type.name());
-        return results.stream().map(this::mapToEntity).toList();
+        return results.stream().map(EntityRepository::mapToEntity).toList();
     }
 
     /**
@@ -142,7 +142,7 @@ public class EntityRepository {
         executor.recordMerge(sourceEntityId, targetEntityId, confidence, reason);
     }
 
-    private Entity mapToEntity(Map<String, Object> row) {
+    public static Entity mapToEntity(Map<String, Object> row) {
         Entity.Builder builder = Entity.builder()
                 .id((String) row.get("id"))
                 .canonicalName((String) row.get("canonicalName"))

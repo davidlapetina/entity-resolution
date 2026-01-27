@@ -50,7 +50,7 @@
         <slf4j.version>2.0.11</slf4j.version>
         <logback.version>1.4.14</logback.version>
         <jackson.version>2.16.1</jackson.version>
-        <mockito.version>5.10.0</mockito.version>
+        <mockito.version>5.21.0</mockito.version>
     </properties>
 
     <dependencies>
@@ -112,6 +112,14 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Jakarta REST API (optional - for REST module) -->
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <version>3.1.0</version>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -154,6 +162,13 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <argLine>
+                        --add-opens java.base/java.lang=ALL-UNNAMED
+                        --add-opens java.base/java.lang.reflect=ALL-UNNAMED
+                        --add-opens java.base/java.util=ALL-UNNAMED
+                    </argLine>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

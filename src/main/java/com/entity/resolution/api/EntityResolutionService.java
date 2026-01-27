@@ -17,6 +17,8 @@ import com.entity.resolution.merge.MergeEngine;
 import com.entity.resolution.merge.MergeResult;
 import com.entity.resolution.metrics.MetricsService;
 import com.entity.resolution.metrics.NoOpMetricsService;
+import com.entity.resolution.review.ReviewItem;
+import com.entity.resolution.review.ReviewService;
 import com.entity.resolution.tracing.NoOpTracingService;
 import com.entity.resolution.tracing.Span;
 import com.entity.resolution.tracing.TracingService;
@@ -55,6 +57,7 @@ public class EntityResolutionService {
     private final DistributedLock distributedLock;
     private final MetricsService metricsService;
     private final TracingService tracingService;
+    private final ReviewService reviewService;
 
     public EntityResolutionService(
             EntityRepository entityRepository,
@@ -154,6 +157,28 @@ public class EntityResolutionService {
             DistributedLock distributedLock,
             MetricsService metricsService,
             TracingService tracingService) {
+        this(entityRepository, synonymRepository, duplicateRepository, normalizationEngine,
+                similarityScorer, mergeEngine, llmEnricher, auditService, defaultOptions,
+                blockingKeyStrategy, resolutionCache, distributedLock,
+                metricsService, tracingService, null);
+    }
+
+    public EntityResolutionService(
+            EntityRepository entityRepository,
+            SynonymRepository synonymRepository,
+            DuplicateEntityRepository duplicateRepository,
+            NormalizationEngine normalizationEngine,
+            CompositeSimilarityScorer similarityScorer,
+            MergeEngine mergeEngine,
+            LLMEnricher llmEnricher,
+            AuditService auditService,
+            ResolutionOptions defaultOptions,
+            BlockingKeyStrategy blockingKeyStrategy,
+            ResolutionCache resolutionCache,
+            DistributedLock distributedLock,
+            MetricsService metricsService,
+            TracingService tracingService,
+            ReviewService reviewService) {
         this.entityRepository = entityRepository;
         this.synonymRepository = synonymRepository;
         this.duplicateRepository = duplicateRepository;
@@ -168,6 +193,7 @@ public class EntityResolutionService {
         this.distributedLock = distributedLock != null ? distributedLock : new NoOpDistributedLock();
         this.metricsService = metricsService != null ? metricsService : new NoOpMetricsService();
         this.tracingService = tracingService != null ? tracingService : new NoOpTracingService();
+        this.reviewService = reviewService;
     }
 
     /**
@@ -592,12 +618,26 @@ public class EntityResolutionService {
                         .build();
             }
             case REVIEW -> {
-                auditService.record(AuditAction.MANUAL_REVIEW_REQUESTED, matchedEntity.getId(),
-                        options.getSourceSystem(), Map.of(
-                                "originalName", originalName,
-                                "matchedName", matchedEntity.getCanonicalName(),
-                                "confidence", matchResult.score()
-                        ));
+                // Submit to review queue if available
+                if (reviewService != null) {
+                    Entity sourceEntity = createEntityNode(originalName, normalizedName, entityType, matchResult.score());
+                    ReviewItem reviewItem = ReviewItem.builder()
+                            .sourceEntityId(sourceEntity.getId())
+                            .candidateEntityId(matchedEntity.getId())
+                            .sourceEntityName(originalName)
+                            .candidateEntityName(matchedEntity.getCanonicalName())
+                            .entityType(entityType.name())
+                            .similarityScore(matchResult.score())
+                            .build();
+                    reviewService.submitForReview(reviewItem);
+                } else {
+                    auditService.record(AuditAction.MANUAL_REVIEW_REQUESTED, matchedEntity.getId(),
+                            options.getSourceSystem(), Map.of(
+                                    "originalName", originalName,
+                                    "matchedName", matchedEntity.getCanonicalName(),
+                                    "confidence", matchResult.score()
+                            ));
+                }
                 return EntityResolutionResult.builder()
                         .canonicalEntity(matchedEntity)
                         .entityReference(EntityReference.withResolver(matchedEntity.getId(),
@@ -747,11 +787,23 @@ public class EntityResolutionService {
         return auditService;
     }
 
+    public EntityRepository getEntityRepository() {
+        return entityRepository;
+    }
+
+    public SynonymRepository getSynonymRepository() {
+        return synonymRepository;
+    }
+
     public MetricsService getMetricsService() {
         return metricsService;
     }
 
     public TracingService getTracingService() {
         return tracingService;
+    }
+
+    public ReviewService getReviewService() {
+        return reviewService;
     }
 }

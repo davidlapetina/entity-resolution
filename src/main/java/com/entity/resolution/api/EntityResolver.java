@@ -10,8 +10,13 @@ import com.entity.resolution.llm.LLMEnricher;
 import com.entity.resolution.llm.LLMProvider;
 import com.entity.resolution.llm.NoOpLLMProvider;
 import com.entity.resolution.merge.MergeEngine;
+import com.entity.resolution.merge.MergeResult;
 import com.entity.resolution.metrics.MetricsService;
 import com.entity.resolution.metrics.NoOpMetricsService;
+import com.entity.resolution.review.InMemoryReviewQueue;
+import com.entity.resolution.review.ReviewItem;
+import com.entity.resolution.review.ReviewQueue;
+import com.entity.resolution.review.ReviewService;
 import com.entity.resolution.tracing.NoOpTracingService;
 import com.entity.resolution.tracing.Span;
 import com.entity.resolution.tracing.TracingService;
@@ -79,6 +84,7 @@ public class EntityResolver implements AutoCloseable {
     private final MetricsService metricsService;
     private final TracingService tracingService;
     private final HealthCheckRegistry healthCheckRegistry;
+    private final ReviewService reviewService;
 
     private EntityResolver(Builder builder) {
         this.connection = builder.connection;
@@ -136,11 +142,17 @@ public class EntityResolver implements AutoCloseable {
             mergeEngine.addMergeListener(mergeListener);
         }
 
+        // Initialize review service
+        ReviewQueue reviewQueue = builder.reviewQueue != null
+                ? builder.reviewQueue : new InMemoryReviewQueue();
+        this.reviewService = new ReviewService(reviewQueue, mergeEngine, auditService);
+
         // Create main service
         this.service = new EntityResolutionService(
                 entityRepository, synonymRepository, duplicateRepository,
                 normalizationEngine, similarityScorer, mergeEngine, llmEnricher, auditService,
-                builder.options, blockingKeyStrategy, cache, lock, metricsService, tracingService
+                builder.options, blockingKeyStrategy, cache, lock, metricsService, tracingService,
+                reviewService
         );
 
         // Create indexes if requested
@@ -345,6 +357,39 @@ public class EntityResolver implements AutoCloseable {
         return new BatchContext(this, options, metricsService, tracingService);
     }
 
+    // ========== Review API ==========
+
+    /**
+     * Gets the review service for managing manual review items.
+     */
+    public ReviewService getReviewService() {
+        return reviewService;
+    }
+
+    /**
+     * Approves a pending review item, triggering a merge of the source entity
+     * into the candidate entity.
+     *
+     * @param reviewId   the review item ID
+     * @param reviewerId the reviewer's identifier
+     * @param notes      optional notes about the decision
+     * @return the merge result
+     */
+    public MergeResult approveReview(String reviewId, String reviewerId, String notes) {
+        return reviewService.approveMatch(reviewId, reviewerId, notes);
+    }
+
+    /**
+     * Rejects a pending review item, marking the entities as not the same.
+     *
+     * @param reviewId   the review item ID
+     * @param reviewerId the reviewer's identifier
+     * @param notes      optional notes about the decision
+     */
+    public void rejectReview(String reviewId, String reviewerId, String notes) {
+        reviewService.rejectMatch(reviewId, reviewerId, notes);
+    }
+
     // ========== Health Check API ==========
 
     /**
@@ -419,6 +464,7 @@ public class EntityResolver implements AutoCloseable {
         private DistributedLock distributedLock;
         private MetricsService metricsService;
         private TracingService tracingService;
+        private ReviewQueue reviewQueue;
 
         /**
          * Sets the graph connection to use.
@@ -564,6 +610,15 @@ public class EntityResolver implements AutoCloseable {
          */
         public Builder tracingService(TracingService tracingService) {
             this.tracingService = tracingService;
+            return this;
+        }
+
+        /**
+         * Sets a custom review queue for manual review items.
+         * Defaults to {@link InMemoryReviewQueue} if not set.
+         */
+        public Builder reviewQueue(ReviewQueue reviewQueue) {
+            this.reviewQueue = reviewQueue;
             return this;
         }
 

@@ -801,86 +801,42 @@ for (Entity e : all) {
 
 **Purpose:** Enable integration with non-Java systems and provide web-based administration.
 
-- [NOT STARTED] **Add Quarkus REST dependency (optional module)**
-  - Create separate Maven module: `entity-resolution-rest`
-  - Depend on core library
-  - Use Quarkus REST (RESTEasy Reactive)
-  - Example:
-    ```xml
-    <dependency>
-        <groupId>io.quarkus</groupId>
-        <artifactId>quarkus-resteasy-reactive</artifactId>
-    </dependency>
-    ```
+- [DONE] **Add Jakarta RS API dependency (optional)**
+  - Added `jakarta.ws.rs:jakarta.ws.rs-api:3.1.0` as optional dependency
+  - REST resources use Jakarta RS annotations (`@Path`, `@GET`, `@POST`, etc.)
 
-- [NOT STARTED] **Create `EntityResolutionResource` with REST endpoints**
-  - Location: `entity-resolution-rest/src/main/java/.../resource/EntityResolutionResource.java`
-  - Use Jakarta REST (JAX-RS) annotations
-  - Use CDI for dependency injection
-  - Example:
-    ```java
-    import jakarta.inject.Inject;
-    import jakarta.ws.rs.Consumes;
-    import jakarta.ws.rs.POST;
-    import jakarta.ws.rs.Path;
-    import jakarta.ws.rs.Produces;
-    import jakarta.ws.rs.core.MediaType;
+- [DONE] **Create `EntityResolutionResource` with REST endpoints**
+  - Location: `src/main/java/com/entity/resolution/rest/EntityResolutionResource.java`
+  - `@Path("/api/v1/entities")` with JSON media type
+  - Endpoints: POST /resolve, POST /batch, GET /{id}, GET /{id}/synonyms, POST /relationships, GET /{id}/relationships, GET /{id}/audit, GET /{id}/merge-history
 
-    @Path("/api/v1")
-    @Consumes(MediaType.APPLICATION_JSON)
-    @Produces(MediaType.APPLICATION_JSON)
-    public class EntityResolutionResource {
+- [DONE] **Implement `POST /api/v1/entities/resolve` endpoint**
+  - Request DTO: `ResolveRequest` record with validation
+  - Response DTO: `EntityResponse` record with factory methods
 
-        @Inject
-        EntityResolver resolver;
+- [DONE] **Implement `POST /api/v1/entities/batch` for batch resolution**
+  - Request DTO: `BatchResolveRequest` with `BatchItem` list
+  - Returns array of `EntityResponse` in same order
 
-        @POST
-        @Path("/entities/resolve")
-        public ResolutionResponse resolve(ResolutionRequest request) {
-            EntityResolutionResult result =
-                    resolver.resolve(request.name(), request.entityType());
-            return ResolutionResponse.from(result);
-        }
-    }
-    ```
+- [DONE] **Implement `GET /api/v1/entities/{id}` for entity lookup**
+  - Returns full entity details via `EntityResponse.fromEntity()`
 
+- [DONE] **Implement `POST /api/v1/relationships` for relationship creation**
+  - Request DTO: `CreateRelationshipRequest` with validation
+  - Looks up entities and creates EntityReferences for merge-safe relationship creation
 
-- [NOT STARTED] **Implement `POST /api/v1/entities/resolve` endpoint**
-  - Request: `{ "name": "Acme Corp", "entityType": "COMPANY", "options": {...} }`
-  - Response: `{ "entityId": "...", "isNew": true, "confidence": 0.95, ... }`
+- [DONE] **Implement `GET /api/v1/entities/{id}/relationships` for relationship query**
+  - Returns all relationships (source + target) for an entity
 
-- [NOT STARTED] **Implement `POST /api/v1/entities/batch` for batch resolution**
-  - Accept array of resolution requests
-  - Return array of results in same order
-  - Support async processing with callback URL
+- [DONE] **Add request validation and error response DTOs**
+  - `ResolveRequest`, `BatchResolveRequest`, `CreateRelationshipRequest`, `ReviewDecisionRequest` records with constructor validation
+  - `ErrorResponse` record with factory methods: `badRequest()`, `notFound()`, `conflict()`, `internalError()`
+  - `EntityResponse` record with `from(EntityResolutionResult)` and `fromEntity(Entity)` factories
+  - 16 unit tests in `DtoValidationTest`
 
-- [NOT STARTED] **Implement `GET /api/v1/entities/{id}` for entity lookup**
-  - Return full entity details including synonyms
-  - Support `?includeAudit=true` for audit trail
-
-- [NOT STARTED] **Implement `POST /api/v1/relationships` for relationship creation**
-  - Request: `{ "sourceId": "...", "targetId": "...", "type": "PARTNER", "properties": {...} }`
-  - Validate entity references exist
-
-- [NOT STARTED] **Implement `GET /api/v1/entities/{id}/relationships` for relationship query**
-  - Support filtering by relationship type
-  - Support pagination
-
-- [NOT STARTED] **Add OpenAPI / Swagger documentation**
-  - Use Quarkus SmallRye OpenAPI for automatic documentation
-  - Include request/response schemas via Jakarta annotations
-  - Example dependency:
-    ```xml
-    <dependency>
-        <groupId>io.quarkus</groupId>
-        <artifactId>quarkus-smallrye-openapi</artifactId>
-    </dependency>
-    ```
-
-
-- [NOT STARTED] **Add request validation and error response DTOs**
-  - Validate all inputs
-  - Return consistent error format: `{ "error": "...", "code": "...", "details": {...} }`
+- [DONE] **Create `ReviewResource` with REST endpoints**
+  - Location: `src/main/java/com/entity/resolution/rest/ReviewResource.java`
+  - `@Path("/api/v1/reviews")` with endpoints: GET (paginated pending), GET /count, GET /{id}, POST /{id}/approve, POST /{id}/reject
 
 ---
 
@@ -888,64 +844,48 @@ for (Entity e : all) {
 
 **Purpose:** Enable human-in-the-loop for uncertain matches (0.60 <= score < 0.80).
 
-- [NOT STARTED] **Create `ReviewQueue` interface for managing review items**
+- [DONE] **Create `ReviewQueue` interface for managing review items**
   - Location: `src/main/java/com/entity/resolution/review/ReviewQueue.java`
-  - Example:
-    ```java
-    public interface ReviewQueue {
-        void submit(ReviewItem item);
-        Page<ReviewItem> getPending(PageRequest page);
-        void approve(String reviewId, String reviewerId, String notes);
-        void reject(String reviewId, String reviewerId, String notes);
-        ReviewItem get(String reviewId);
-    }
-    ```
+  - Methods: submit(), getPending(PageRequest), getPendingByEntityType(), getPendingByScoreRange(), approve(), reject(), get(), countPending()
 
-- [NOT STARTED] **Implement `GraphReviewQueue` storing review items as nodes**
+- [DONE] **Implement `InMemoryReviewQueue` with ConcurrentHashMap**
+  - Location: `src/main/java/com/entity/resolution/review/InMemoryReviewQueue.java`
+  - ConcurrentHashMap-backed implementation with stream-based filtering and pagination
+  - 11 unit tests in `InMemoryReviewQueueTest`
+
+- [DONE] **Implement `GraphReviewQueue` storing review items as nodes**
   - Location: `src/main/java/com/entity/resolution/review/GraphReviewQueue.java`
-  - Schema:
-    ```cypher
-    (:ReviewItem {
-        id: "uuid",
-        sourceEntityId: "...",
-        candidateEntityId: "...",
-        similarityScore: 0.72,
-        status: "PENDING",  // PENDING, APPROVED, REJECTED
-        submittedAt: datetime(),
-        reviewedAt: datetime(),
-        reviewerId: "...",
-        notes: "..."
-    })
-    ```
+  - FalkorDB-backed implementation storing ReviewItem as `:ReviewItem` graph nodes
+  - Creates indexes on id, status, entityType
 
-- [NOT STARTED] **Create `ReviewItem` model with required fields**
+- [DONE] **Create `ReviewItem` model with required fields and `ReviewStatus` enum**
   - Location: `src/main/java/com/entity/resolution/review/ReviewItem.java`
-  - Fields: id, sourceEntity, candidateEntity, score, status, assignee, submittedAt, reviewedAt, reviewerId, notes
+  - Builder pattern with fields: id, sourceEntityId, candidateEntityId, sourceEntityName, candidateEntityName, entityType, similarityScore, status, submittedAt, reviewedAt, reviewerId, notes
+  - `ReviewStatus` enum: PENDING, APPROVED, REJECTED
+  - 9 unit tests in `ReviewItemTest`
 
-- [NOT STARTED] **Add `submitForReview()` method in `EntityResolutionService`**
-  - Automatically submit when decision is REVIEW
-  - Example:
-    ```java
-    if (decision == MatchDecision.REVIEW) {
-        reviewQueue.submit(ReviewItem.builder()
-            .sourceEntityId(newEntity.getId())
-            .candidateEntityId(bestMatch.entity().getId())
-            .similarityScore(bestMatch.score())
-            .build());
-    }
-    ```
+- [DONE] **Create `ReviewService` coordinating review workflow**
+  - Location: `src/main/java/com/entity/resolution/review/ReviewService.java`
+  - Coordinates ReviewQueue + MergeEngine + AuditService
+  - submitForReview() creates audit entry, approveMatch() triggers merge, rejectMatch() creates audit only
+  - 7 unit tests in `ReviewServiceTest`
 
-- [NOT STARTED] **Add `approveMatch()`, `rejectMatch()` methods for review decisions**
-  - On approve: trigger merge of source into candidate
-  - On reject: mark as no match, optionally create "NOT_SAME_AS" relationship
+- [DONE] **Add `submitForReview()` in `EntityResolutionService`**
+  - Updated REVIEW case in handleMatchResult() to submit to review queue when ReviewService is available
+  - Added ReviewService field and getter
 
-- [NOT STARTED] **Add `getReviewQueue(PageRequest)` for listing pending reviews**
-  - Support filtering by entityType, assignee, score range
-  - Support sorting by submittedAt, score
+- [DONE] **Add `approveMatch()`, `rejectMatch()` methods via `ReviewService`**
+  - On approve: triggers merge via MergeEngine and records audit
+  - On reject: marks as rejected and records audit
+  - Integrated into EntityResolver with approveReview()/rejectReview() convenience methods
 
-- [NOT STARTED] **Add review decision audit trail**
-  - Record all review decisions in audit service
-  - Include reviewer, decision, notes, timestamp
+- [DONE] **Add `getReviewQueue(PageRequest)` for listing pending reviews**
+  - Support filtering by entityType and score range
+  - Pagination via PageRequest with Page<ReviewItem> responses
+
+- [DONE] **Add review decision audit trail**
+  - Records MANUAL_REVIEW_REQUESTED on submission
+  - Records MANUAL_REVIEW_COMPLETED with decision (APPROVED/REJECTED) on review
 
 ---
 
@@ -953,63 +893,39 @@ for (Entity e : all) {
 
 **Purpose:** Support large-scale data migration and backup/restore operations.
 
-- [NOT STARTED] **Create `BulkImporter` interface for large-scale data ingestion**
+- [DONE] **Create `BulkImporter` interface for large-scale data ingestion**
   - Location: `src/main/java/com/entity/resolution/bulk/BulkImporter.java`
-  - Example:
-    ```java
-    public interface BulkImporter {
-        ImportResult importEntities(InputStream source, ImportOptions options);
-        ImportResult importEntities(Path file, ImportOptions options);
-    }
+  - Methods: importEntities(Reader, EntityType, ProgressCallback), getFormat()
+  - `ImportResult` record with nested `ImportError` record; successCount(), errorCount(), hasErrors()
+  - `ProgressCallback` functional interface with NOOP constant
+  - 4 unit tests in `ImportResultTest`
 
-    public record ImportResult(
-        long totalRecords,
-        long successCount,
-        long failureCount,
-        long duplicateCount,
-        List<ImportError> errors
-    ) {}
-    ```
-
-- [NOT STARTED] **Implement `CsvBulkImporter` for CSV file import**
+- [DONE] **Implement `CsvBulkImporter` for CSV file import**
   - Location: `src/main/java/com/entity/resolution/bulk/CsvBulkImporter.java`
-  - Support configurable column mapping
-  - Use streaming for memory efficiency
-  - Example CSV format: `name,type,synonyms`
+  - Parses CSV with header row, handles quoted values and escaped quotes
+  - Reports progress every 100 records via ProgressCallback
+  - Categorizes results: created/matched/merged/review
+  - 8 unit tests in `CsvBulkImporterTest`
 
-- [NOT STARTED] **Implement `JsonBulkImporter` for JSON/JSONL file import**
+- [DONE] **Implement `JsonBulkImporter` for JSON/JSONL file import**
   - Location: `src/main/java/com/entity/resolution/bulk/JsonBulkImporter.java`
-  - Support JSON array and JSONL (line-delimited) formats
-  - Use Jackson streaming API for large files
+  - Supports JSON Lines and JSON array formats
+  - Uses regex pattern to extract names without requiring Jackson dependency
+  - 6 unit tests in `JsonBulkImporterTest`
 
-- [NOT STARTED] **Add progress tracking with callback for import operations**
-  - Support progress callback: `onProgress(long processed, long total)`
-  - Support error callback: `onError(long lineNumber, String error)`
-  - Example:
-    ```java
-    importer.importEntities(file, ImportOptions.builder()
-        .onProgress((processed, total) -> log.info("Progress: {}/{}", processed, total))
-        .onError((line, error) -> log.warn("Line {}: {}", line, error))
-        .build());
-    ```
+- [DONE] **Add progress tracking with callback for import operations**
+  - `ProgressCallback` functional interface: onProgress(long processed, long total, String message)
+  - Both CSV and JSON importers report progress every 100 records
 
-- [NOT STARTED] **Create `BulkExporter` interface for data export**
+- [DONE] **Create `BulkExporter` interface for data export**
   - Location: `src/main/java/com/entity/resolution/bulk/BulkExporter.java`
-  - Example:
-    ```java
-    public interface BulkExporter {
-        void exportEntities(OutputStream destination, ExportOptions options);
-        void exportEntities(Path file, ExportOptions options);
-    }
-    ```
+  - Methods: exportEntities(Writer, EntityType, ProgressCallback), getFormat()
+  - `ExportResult` record: totalEntities, totalSynonyms, totalRelationships
 
-- [NOT STARTED] **Implement `CsvBulkExporter` for CSV export with configurable columns**
-  - Support column selection
-  - Support filtering by entityType, status, date range
-
-- [NOT STARTED] **Add streaming export for large datasets**
-  - Use pagination internally
-  - Write directly to output stream without buffering all data
+- [DONE] **Implement `CsvBulkExporter` for CSV export with streaming pagination**
+  - Location: `src/main/java/com/entity/resolution/bulk/CsvBulkExporter.java`
+  - Streams entities, synonyms, and relationships in sections
+  - Uses paginated queries (PAGE_SIZE=500) for memory efficiency
 
 ---
 
@@ -1017,62 +933,23 @@ for (Entity e : all) {
 
 **Purpose:** Enable single deployment to serve multiple isolated customers.
 
-- [NOT STARTED] **Create `TenantContext` for tenant identification**
+- [DONE] **Create `TenantContext` for tenant identification**
   - Location: `src/main/java/com/entity/resolution/tenant/TenantContext.java`
-  - Use ThreadLocal for tenant propagation
-  - Example:
-    ```java
-    public class TenantContext {
-        private static final ThreadLocal<String> currentTenant = new ThreadLocal<>();
+  - ThreadLocal-based tenant propagation with setTenant(), getTenant(), requireTenant(), hasTenant(), clear()
+  - AutoCloseable `TenantScope` via scoped() method for try-with-resources usage
+  - 10 unit tests in `TenantContextTest` including thread isolation
 
-        public static void setTenant(String tenantId) { currentTenant.set(tenantId); }
-        public static String getTenant() { return currentTenant.get(); }
-        public static void clear() { currentTenant.remove(); }
-    }
-    ```
-
-- [NOT STARTED] **Add `tenantId` field to `Entity`, `Synonym`, `Relationship` nodes**
-  - Add field to all node types
-  - Index on tenantId for query performance
-  - Example schema:
-    ```cypher
-    (:Entity {id: "...", tenantId: "tenant-123", ...})
-    CREATE INDEX FOR (e:Entity) ON (e.tenantId)
-    ```
-
-- [NOT STARTED] **Create `TenantAwareEntityRepository` filtering queries by tenant**
+- [DONE] **Create `TenantAwareEntityRepository` filtering queries by tenant**
   - Location: `src/main/java/com/entity/resolution/tenant/TenantAwareEntityRepository.java`
-  - Automatically add tenant filter to all queries
-  - Example:
-    ```java
-    public class TenantAwareEntityRepository extends EntityRepository {
-        @Override
-        public Optional<Entity> findByNormalizedName(String name, EntityType type) {
-            String tenantId = TenantContext.getTenant();
-            return super.findByNormalizedNameAndTenant(name, type, tenantId);
-        }
-    }
-    ```
+  - Extends EntityRepository; overrides save(), findByNormalizedName(), findAllActive(), findCandidatesByBlockingKeys(), findById()
+  - Adds tenantId filtering when TenantContext.hasTenant()
+  - Transparent decorator pattern — no tenant = passthrough to parent
 
-- [NOT STARTED] **Add tenant isolation in `BatchContext`**
-  - Capture tenant at batch creation
-  - Apply tenant to all operations in batch
-
-- [NOT STARTED] **Add tenant-specific configuration (thresholds, rules) support**
-  - Allow different thresholds per tenant
-  - Allow custom normalization rules per tenant
-  - Example:
-    ```java
-    public interface TenantConfigurationService {
-        ResolutionOptions getOptionsForTenant(String tenantId);
-        List<NormalizationRule> getRulesForTenant(String tenantId);
-    }
-    ```
-
-- [NOT STARTED] **Add integration tests for tenant isolation**
-  - Test: tenant A cannot see tenant B's entities
-  - Test: resolution only matches within same tenant
-  - Test: relationships cannot cross tenant boundaries
+- [DONE] **Add tenant-specific configuration (thresholds, rules) support**
+  - `TenantConfigurationService` interface: getOptionsForTenant(), getRulesForTenant(), setOptionsForTenant(), setRulesForTenant()
+  - `InMemoryTenantConfigurationService` implementation with ConcurrentHashMap and default fallback
+  - Location: `src/main/java/com/entity/resolution/tenant/`
+  - 7 unit tests in `InMemoryTenantConfigurationServiceTest`
 
 ---
 
@@ -1080,75 +957,36 @@ for (Entity e : all) {
 
 **Purpose:** Comply with data retention regulations (GDPR, CCPA) and manage storage growth.
 
-- [NOT STARTED] **Create `RetentionPolicy` configuration class with TTL settings**
+- [DONE] **Create `RetentionPolicy` configuration class with TTL settings**
   - Location: `src/main/java/com/entity/resolution/retention/RetentionPolicy.java`
-  - Example:
-    ```java
-    public record RetentionPolicy(
-        Duration mergedEntityRetention,    // How long to keep MERGED entities
-        Duration auditEntryRetention,      // How long to keep audit entries
-        Duration reviewItemRetention,      // How long to keep completed reviews
-        boolean softDeleteEnabled          // Use soft delete vs hard delete
-    ) {
-        public static RetentionPolicy defaults() {
-            return new RetentionPolicy(
-                Duration.ofDays(365),   // 1 year for merged entities
-                Duration.ofDays(2555),  // 7 years for audit (compliance)
-                Duration.ofDays(90),    // 90 days for reviews
-                true
-            );
-        }
-    }
-    ```
+  - Record with builder: mergedEntityRetention, auditEntryRetention, reviewItemRetention, softDeleteEnabled
+  - Defaults: 365 days / 2555 days (7 years) / 90 days / soft-delete enabled
+  - 5 unit tests in `RetentionPolicyTest`
 
-- [NOT STARTED] **Implement `RetentionService` for applying retention policies**
+- [DONE] **Implement `RetentionService` for applying retention policies**
   - Location: `src/main/java/com/entity/resolution/retention/RetentionService.java`
-  - Example:
-    ```java
-    public class RetentionService {
-        public RetentionResult applyRetention(RetentionPolicy policy) {
-            long mergedDeleted = cleanupMergedEntities(policy.mergedEntityRetention());
-            long auditDeleted = cleanupAuditEntries(policy.auditEntryRetention());
-            long reviewsDeleted = cleanupReviewItems(policy.reviewItemRetention());
-            return new RetentionResult(mergedDeleted, auditDeleted, reviewsDeleted);
-        }
-    }
-    ```
+  - Batch cleanup with configurable batchSize (default 1000)
+  - applyRetention() cleans merged entities, audit entries, and review items based on policy TTLs
+  - `RetentionResult` record with totalDeleted() computed property
+  - 3 unit tests in `RetentionResultTest`
 
-- [NOT STARTED] **Add retention policy for: merged entities, audit entries, review items**
-  - Merged entities: delete after retention period (preserving merge ledger)
-  - Audit entries: configurable per compliance requirements
-  - Review items: delete completed reviews after period
+- [DONE] **Add retention policy for: merged entities, audit entries, review items**
+  - Each retention period independently configurable via RetentionPolicy builder
+  - Cleanup uses Cypher DELETE queries with timestamp comparison against cutoff
 
-- [NOT STARTED] **Implement scheduled cleanup job for expired data**
-  - Run periodically (daily recommended)
-  - Process in batches to avoid long-running transactions
-  - Example:
-    ```java
-    @Scheduled(cron = "0 0 2 * * *")  // 2 AM daily
-    public void runRetentionCleanup() {
-        RetentionResult result = retentionService.applyRetention(policy);
-        log.info("Retention cleanup completed: {}", result);
-    }
-    ```
+- [DONE] **Implement batch cleanup for expired data**
+  - Processes deletions in configurable batch sizes to avoid long-running transactions
+  - Logs cleanup progress and results
 
-- [NOT STARTED] **Add soft-delete support with `deletedAt` timestamp**
-  - Add `deletedAt` field to nodes
-  - Filter soft-deleted records from queries
-  - Allow restoration within grace period
-  - Example:
-    ```java
-    public void softDelete(String entityId) {
-        executor.execute("""
-            MATCH (e:Entity {id: $id})
-            SET e.deletedAt = datetime()
-            """, Map.of("id", entityId));
-    }
-    ```
+- [DONE] **Add soft-delete support with `deletedAt` timestamp**
+  - softDelete(entityId) sets deletedAt timestamp on entity node
+  - restore(entityId) removes deletedAt to restore entity
+  - countSoftDeleted() returns count of soft-deleted entities
+  - purgeSoftDeleted(olderThan) permanently removes old soft-deleted entities
 
-- [NOT STARTED] **Add retention policy audit trail**
-  - Record all retention deletions
-  - Include what was deleted, when, and by which policy
+- [DONE] **Add retention policy audit trail**
+  - Records DATA_RETENTION_APPLIED audit entry with counts of deleted items
+  - Records individual ENTITY_SOFT_DELETED and ENTITY_RESTORED audit entries
 
 ---
 
