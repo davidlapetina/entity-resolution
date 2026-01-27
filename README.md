@@ -1,25 +1,27 @@
 # Entity Resolution Library
 
-A graph-native entity resolution library for Java, built for FalkorDB. Provides deterministic and probabilistic deduplication, explicit synonym modeling, and optional LLM-assisted semantic enrichment.
+A graph-native entity resolution library for Java 21, built on [FalkorDB](https://www.falkordb.com/). Provides deterministic and probabilistic deduplication, explicit synonym modeling, audit-safe merges, and optional LLM-assisted semantic enrichment.
 
 ## Features
 
-- **Entity Resolution**: Deduplicate entities using exact matching, fuzzy matching, and LLM-assisted semantic matching
-- **Synonym Management**: First-class synonym modeling with confidence scores and provenance tracking
-- **Merge Safety**: EntityReference handles that remain valid after merges
-- **Batch Processing**: Efficient bulk ingestion with automatic deduplication
-- **Audit Trail**: Immutable merge ledger for compliance and debugging
-- **LLM Integration**: Optional Ollama integration for semantic entity matching (e.g., "Big Blue" → IBM)
+- **Entity Resolution** -- Deduplicate entities using exact matching, fuzzy matching (Levenshtein, Jaro-Winkler, Jaccard), and optional LLM-assisted semantic matching
+- **Synonym Management** -- First-class synonym modeling with confidence scores and provenance tracking
+- **Merge Safety** -- Opaque `EntityReference` handles that remain valid after merges
+- **Batch Processing** -- Efficient bulk ingestion with automatic deduplication
+- **Audit Trail** -- Immutable merge ledger for compliance and debugging
+- **REST API** -- Jakarta RS endpoints with API key authentication, role-based access control, and OpenAPI specification
+- **Quarkus Integration** -- CDI producers and YAML configuration for drop-in Quarkus deployment
+- **LLM Integration** -- Optional Ollama integration for semantic entity matching (e.g., "Big Blue" to IBM)
 
 ## Requirements
 
 - Java 21+
-- FalkorDB (or Redis with RedisGraph module)
+- FalkorDB 4.0+ (or Redis with RedisGraph module)
 - Ollama (optional, for LLM-assisted matching)
 
-## Installation
+## Quick Start
 
-### Maven
+### As a Java Library
 
 ```xml
 <dependency>
@@ -29,38 +31,231 @@ A graph-native entity resolution library for Java, built for FalkorDB. Provides 
 </dependency>
 ```
 
-### Gradle
-
-```groovy
-implementation 'com.entity.resolution:entity-resolution:1.0.0'
-```
-
-## Quick Start
-
-### Basic Entity Resolution
-
 ```java
-import com.entity.resolution.api.*;
-import com.entity.resolution.core.model.*;
-import com.entity.resolution.graph.*;
-
-// Connect to FalkorDB
-GraphConnection connection = new FalkorDBConnection("localhost", 6379, "knowledge-graph");
-
-// Create resolver
 EntityResolver resolver = EntityResolver.builder()
-    .graphConnection(connection)
+    .falkorDB("localhost", 6379, "knowledge-graph")
     .build();
 
-// Resolve an entity
 EntityResolutionResult result = resolver.resolve("Microsoft Corp", EntityType.COMPANY);
 EntityReference ref = result.getEntityReference();
-
-// The reference always points to the canonical entity
-String canonicalId = ref.getId();
 ```
 
-### With Fuzzy Matching Options
+### As a Quarkus REST Service
+
+Add the dependency to your Quarkus project:
+
+```xml
+<dependency>
+    <groupId>com.entity.resolution</groupId>
+    <artifactId>entity-resolution</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+Add `application.yaml` to `src/main/resources/`:
+
+```yaml
+entity-resolution:
+  falkordb:
+    host: localhost
+    port: 6379
+    graph-name: my-knowledge-graph
+
+  resolution:
+    auto-merge-threshold: 0.92
+    synonym-threshold: 0.80
+    review-threshold: 0.60
+
+  llm:
+    enabled: false          # set true to activate LLM matching
+
+  security:
+    enabled: true
+    api-key-header: X-API-Key
+    admin-keys:
+      - "your-admin-api-key"
+    writer-keys:
+      - "your-writer-api-key"
+    reader-keys:
+      - "your-reader-api-key"
+```
+
+The CDI producer (`EntityResolutionProducer`) auto-discovers in Quarkus and wires:
+- `EntityResolver` -- from FalkorDB connection pool + resolution options
+- `ReviewService` -- for the manual review queue
+- Security filters -- API key auth, role authorization, CORS, rate limiting
+- REST resources -- `/api/v1/entities` and `/api/v1/reviews`
+
+Start Quarkus and the REST API is live:
+
+```bash
+mvn quarkus:dev
+```
+
+## REST API
+
+All endpoints require an API key in the `X-API-Key` header.
+
+### Entity Resolution
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/v1/entities/resolve` | WRITER | Resolve a single entity |
+| `POST` | `/api/v1/entities/batch` | WRITER | Batch resolve entities |
+| `GET` | `/api/v1/entities/{id}` | READER | Get entity by ID |
+| `GET` | `/api/v1/entities/{id}/synonyms` | READER | Get entity synonyms |
+| `POST` | `/api/v1/entities/relationships` | WRITER | Create a relationship |
+| `GET` | `/api/v1/entities/{id}/relationships` | READER | Get entity relationships |
+| `GET` | `/api/v1/entities/{id}/audit` | READER | Get audit trail |
+| `GET` | `/api/v1/entities/{id}/merge-history` | READER | Get merge history |
+
+### Manual Review
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/v1/reviews` | READER | List pending reviews |
+| `GET` | `/api/v1/reviews/count` | READER | Count pending reviews |
+| `GET` | `/api/v1/reviews/{id}` | READER | Get review item |
+| `POST` | `/api/v1/reviews/{id}/approve` | ADMIN | Approve review (triggers merge) |
+| `POST` | `/api/v1/reviews/{id}/reject` | ADMIN | Reject review |
+
+### Example: Resolve an Entity
+
+```bash
+curl -X POST http://localhost:8080/api/v1/entities/resolve \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-writer-api-key" \
+  -d '{
+    "name": "Microsoft Corporation",
+    "entityType": "COMPANY"
+  }'
+```
+
+Response:
+
+```json
+{
+  "entityId": "550e8400-e29b-41d4-a716-446655440000",
+  "canonicalName": "Microsoft Corporation",
+  "normalizedName": "microsoft",
+  "entityType": "COMPANY",
+  "status": "ACTIVE",
+  "isNewEntity": true,
+  "wasMerged": false,
+  "wasMatchedViaSynonym": false,
+  "wasNewSynonymCreated": false,
+  "matchConfidence": 1.0
+}
+```
+
+### Example: Batch Resolution
+
+```bash
+curl -X POST http://localhost:8080/api/v1/entities/batch \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-writer-api-key" \
+  -d '{
+    "items": [
+      { "name": "Acme Corp", "entityType": "COMPANY" },
+      { "name": "ACME Corporation", "entityType": "COMPANY" },
+      { "name": "John Smith", "entityType": "PERSON" }
+    ]
+  }'
+```
+
+### OpenAPI / Swagger
+
+When running in Quarkus with `quarkus-smallrye-openapi`, the OpenAPI spec is auto-generated from the MicroProfile OpenAPI annotations:
+
+```bash
+# OpenAPI JSON spec
+curl http://localhost:8080/q/openapi
+
+# Swagger UI (if quarkus-smallrye-openapi-ui is on classpath)
+open http://localhost:8080/q/swagger-ui
+```
+
+## Security
+
+### Authentication
+
+All REST endpoints are protected by API key authentication. Keys are configured in `application.yaml` under `entity-resolution.security`.
+
+The API key must be sent in the `X-API-Key` header (configurable via `api-key-header`).
+
+### Authorization (Roles)
+
+Keys are mapped to three hierarchical roles:
+
+| Role | Access |
+|------|--------|
+| **READER** | GET endpoints: entity lookup, synonyms, relationships, audit trail, reviews |
+| **WRITER** | READER + POST resolve, batch, create relationships |
+| **ADMIN** | WRITER + approve/reject reviews (triggers irreversible merges) |
+
+### CORS
+
+Cross-origin requests are handled by the built-in CORS filter:
+
+```yaml
+entity-resolution:
+  cors:
+    enabled: true
+    allowed-origins: "https://dashboard.example.com"
+    allowed-methods: GET,POST,OPTIONS
+    allowed-headers: Content-Type,X-API-Key
+    max-age: 86400
+```
+
+### Rate Limiting
+
+Per-API-key rate limiting using a token bucket algorithm:
+
+```yaml
+entity-resolution:
+  rate-limit:
+    enabled: true
+    requests-per-second: 100
+    burst-size: 200
+```
+
+## Configuration Reference
+
+All properties use the prefix `entity-resolution.*` and can be overridden via environment variables (e.g., `ENTITY_RESOLUTION_FALKORDB_HOST`).
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `falkordb.host` | `localhost` | FalkorDB host |
+| `falkordb.port` | `6379` | FalkorDB port |
+| `falkordb.graph-name` | `entity-resolution` | Graph name |
+| `pool.max-total` | `20` | Max pool connections |
+| `pool.max-idle` | `10` | Max idle connections |
+| `pool.min-idle` | `2` | Min idle connections |
+| `resolution.auto-merge-threshold` | `0.92` | Score >= this triggers auto-merge |
+| `resolution.synonym-threshold` | `0.80` | Score >= this creates synonym |
+| `resolution.review-threshold` | `0.60` | Score >= this flags for review |
+| `resolution.auto-merge-enabled` | `true` | Enable/disable auto-merge |
+| `cache.enabled` | `true` | Enable resolution cache |
+| `cache.max-size` | `10000` | Max cache entries |
+| `cache.ttl-seconds` | `300` | Cache entry TTL |
+| `llm.enabled` | `false` | Enable LLM enrichment |
+| `llm.provider` | `ollama` | LLM provider type |
+| `llm.confidence-threshold` | `0.85` | Min LLM confidence |
+| `llm.ollama.base-url` | `http://localhost:11434` | Ollama URL |
+| `llm.ollama.model` | `llama3.2` | Ollama model |
+| `llm.ollama.timeout-seconds` | `30` | Ollama request timeout |
+| `security.enabled` | `true` | Enable API key auth |
+| `security.api-key-header` | `X-API-Key` | Header name for API key |
+| `cors.enabled` | `true` | Enable CORS |
+| `rate-limit.enabled` | `true` | Enable rate limiting |
+| `rate-limit.requests-per-second` | `100` | Sustained rate per key |
+| `rate-limit.burst-size` | `200` | Burst capacity |
+
+See [`src/main/resources/application.yaml`](src/main/resources/application.yaml) for the complete reference configuration.
+
+## Library API
+
+### Fuzzy Matching
 
 ```java
 EntityResolutionResult result = resolver.resolve(
@@ -73,12 +268,12 @@ EntityResolutionResult result = resolver.resolve(
 );
 
 if (result.wasNewSynonymCreated()) {
-    System.out.println("Created synonym: " + result.getInputName() +
-                       " -> " + result.getMatchedName());
+    System.out.println("Created synonym: " + result.getInputName()
+        + " -> " + result.getMatchedName());
 }
 ```
 
-### Creating Relationships
+### Relationships
 
 ```java
 EntityReference company = resolver.resolve("Acme Corp", EntityType.COMPANY)
@@ -94,14 +289,8 @@ Relationship rel = resolver.createRelationship(company, ceo, "HAS_CEO");
 
 ```java
 try (BatchContext batch = resolver.beginBatch()) {
-    // Automatic deduplication within batch
     EntityReference a = batch.resolve("Company A", EntityType.COMPANY).getEntityReference();
     EntityReference b = batch.resolve("Company B", EntityType.COMPANY).getEntityReference();
-    EntityReference aDup = batch.resolve("COMPANY A", EntityType.COMPANY).getEntityReference();
-
-    // a and aDup point to the same entity
-    assert a.getId().equals(aDup.getId());
-
     batch.createRelationship(a, b, "PARTNER");
 
     BatchResult result = batch.commit();
@@ -112,53 +301,37 @@ try (BatchContext batch = resolver.beginBatch()) {
 ### LLM-Assisted Matching (Ollama)
 
 ```java
-import com.entity.resolution.llm.*;
-
-// Create Ollama provider (requires Ollama running locally)
 OllamaLLMProvider llmProvider = OllamaLLMProvider.builder()
     .baseUrl("http://localhost:11434")
     .model("llama3.2")
     .build();
 
-// Create resolver with LLM support
 EntityResolver resolver = EntityResolver.builder()
     .graphConnection(connection)
     .llmProvider(llmProvider)
     .options(ResolutionOptions.withLLM())
     .build();
 
-// Now semantic matching works
 // "Big Blue" will match "IBM"
 EntityResolutionResult result = resolver.resolve("Big Blue", EntityType.COMPANY);
 ```
 
-## Core Concepts
-
-### EntityReference
-
-An opaque handle to a canonical entity that always resolves to the current canonical ID, even after merges:
+### Multi-Tenancy
 
 ```java
-EntityReference ref = result.getEntityReference();
-String id = ref.getId();           // Always returns current canonical ID
-String originalId = ref.getOriginalId();  // Returns ID at creation time
-boolean merged = ref.wasMerged();  // True if entity was merged
+// Standard thread-based tenancy
+try (var scope = TenantContext.scoped("tenant-123")) {
+    resolver.resolve("Acme Corp", EntityType.COMPANY);
+}
+
+// Virtual thread / executor propagation
+TenantContext.setTenant("tenant-123");
+executor.submit(TenantContext.propagate(() -> {
+    resolver.resolve("Acme Corp", EntityType.COMPANY);
+}));
 ```
 
-### Resolution Results
-
-```java
-EntityResolutionResult result = resolver.resolve("Microsoft", EntityType.COMPANY);
-
-result.isNewEntity();           // True if entity was newly created
-result.wasMatchedViaSynonym();  // True if matched via existing synonym
-result.wasNewSynonymCreated();  // True if fuzzy match created new synonym
-result.getMatchConfidence();    // Confidence score (0.0 - 1.0)
-result.getInputName();          // Original input name
-result.getMatchedName();        // Canonical name matched to
-```
-
-### Match Decisions
+## Match Decisions
 
 | Score Range | Decision | Action |
 |-------------|----------|--------|
@@ -167,88 +340,11 @@ result.getMatchedName();        // Canonical name matched to
 | 0.60 - 0.80 | REVIEW | Flag for manual review |
 | < 0.60 | NO_MATCH | Create new entity |
 
-## Configuration
-
-### Resolution Options
-
-```java
-ResolutionOptions options = ResolutionOptions.builder()
-    .autoMergeThreshold(0.92)      // Threshold for automatic merges
-    .synonymThreshold(0.80)        // Threshold for synonym creation
-    .reviewThreshold(0.60)         // Threshold for review flagging
-    .useLLM(true)                  // Enable LLM-assisted matching
-    .llmConfidenceThreshold(0.85)  // Minimum LLM confidence
-    .build();
-```
-
-### Similarity Weights
-
-The composite similarity score uses three algorithms:
-
-```
-score = 0.4 * levenshtein + 0.35 * jaroWinkler + 0.25 * jaccard
-```
-
-### Normalization Rules
-
-Built-in rules remove common suffixes (Inc, Ltd, Corp, etc.):
-
-| Pattern | Entity Type |
-|---------|-------------|
-| `\bincorporated\b` | COMPANY |
-| `\binc\b\.?` | COMPANY |
-| `\bcorporation\b` | COMPANY |
-| `\bltd\b\.?` | COMPANY |
-| `\bcorp\b\.?` | COMPANY |
-| `\bco\b\.?` | COMPANY |
-| `\bllc\b\.?` | COMPANY |
-
-## Ollama Setup
-
-For LLM-assisted matching, install Ollama:
-
-```bash
-# Install Ollama (macOS)
-brew install ollama
-
-# Start Ollama
-ollama serve
-
-# Pull the model
-ollama pull llama3.2
-```
-
 ## Graph Data Model
 
-### Node Types
-
 ```cypher
-// Canonical entity
-(:Entity {
-  id: UUID,
-  canonicalName: String,
-  normalizedName: String,
-  type: String,
-  confidenceScore: Float,
-  status: "ACTIVE" | "MERGED",
-  createdAt: Timestamp,
-  updatedAt: Timestamp
-})
-
-// Synonym
-(:Synonym {
-  id: UUID,
-  value: String,
-  normalizedValue: String,
-  source: "SYSTEM" | "HUMAN" | "LLM",
-  confidence: Float,
-  createdAt: Timestamp
-})
-```
-
-### Relationship Types
-
-```cypher
+(:Entity {id, canonicalName, normalizedName, type, confidenceScore, status, createdAt, updatedAt})
+(:Synonym {id, value, normalizedValue, source, confidence, createdAt})
 (:Synonym)-[:SYNONYM_OF]->(:Entity)
 (:Entity {status: "MERGED"})-[:MERGED_INTO]->(:Entity {status: "ACTIVE"})
 (:Entity)-[:LIBRARY_REL {type: String}]->(:Entity)
@@ -257,36 +353,23 @@ ollama pull llama3.2
 ## Building from Source
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/entity-resolution.git
-cd entity-resolution
-
 # Build
 mvn clean install
 
-# Run tests
+# Run unit tests (excludes integration tests)
 mvn test
 
-# Run tests with Ollama integration tests
-# (requires Ollama running locally with llama3.2)
-mvn test -Dtest=OllamaLLMProviderTest
+# Run integration tests (requires Docker for Testcontainers)
+mvn verify -Pintegration-test
+
+# Build JMH benchmark uber-jar
+mvn package -Pbenchmark -DskipTests
 ```
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+Apache License 2.0 -- see [LICENSE](LICENSE).
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Acknowledgments
-
-- Built for [FalkorDB](https://www.falkordb.com/)
-- LLM integration powered by [Ollama](https://ollama.ai/)
+Contributions welcome. Please submit a Pull Request.

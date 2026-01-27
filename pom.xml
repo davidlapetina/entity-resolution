@@ -122,6 +122,46 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Jakarta CDI API (optional - for Quarkus/CDI integration) -->
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+            <version>4.0.1</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Jakarta Annotation API (optional - for @Priority on filters) -->
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <version>2.1.1</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- MicroProfile Config API (optional - for YAML configuration binding) -->
+        <dependency>
+            <groupId>org.eclipse.microprofile.config</groupId>
+            <artifactId>microprofile-config-api</artifactId>
+            <version>3.1</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- MicroProfile OpenAPI (optional - for OpenAPI/Swagger generation) -->
+        <dependency>
+            <groupId>org.eclipse.microprofile.openapi</groupId>
+            <artifactId>microprofile-openapi-api</artifactId>
+            <version>3.1.1</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Jakarta RS runtime (test only - provides RuntimeDelegate for Response builder) -->
+        <dependency>
+            <groupId>org.glassfish.jersey.core</groupId>
+            <artifactId>jersey-common</artifactId>
+            <version>3.1.5</version>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

@@ -1,0 +1,81 @@
+# ============================================================================
+# Entity Resolution Library - Reference Configuration
+# ============================================================================
+# Copy this file into your Quarkus project's src/main/resources/ directory
+# and adjust values for your environment.
+#
+# All properties use the prefix: entity-resolution.*
+# MicroProfile Config properties can also be overridden via environment
+# variables using the mapping: entity-resolution.falkordb.host -> ENTITY_RESOLUTION_FALKORDB_HOST
+# ============================================================================
+
+entity-resolution:
+
+  # ── FalkorDB Connection ──────────────────────────────────────────────────
+  falkordb:
+    host: localhost
+    port: 6379
+    graph-name: entity-resolution
+
+  # ── Connection Pool ──────────────────────────────────────────────────────
+  pool:
+    max-total: 20
+    max-idle: 10
+    min-idle: 2
+    max-wait-millis: 5000
+    test-on-borrow: true
+
+  # ── Resolution Thresholds ────────────────────────────────────────────────
+  resolution:
+    auto-merge-threshold: 0.92      # score >= this → auto-merge
+    synonym-threshold: 0.80          # score >= this → create synonym
+    review-threshold: 0.60           # score >= this → flag for manual review
+    auto-merge-enabled: true
+    source-system: SYSTEM
+
+  # ── Cache ────────────────────────────────────────────────────────────────
+  cache:
+    enabled: true
+    max-size: 10000
+    ttl-seconds: 300
+
+  # ── LLM Integration (optional) ──────────────────────────────────────────
+  # Set enabled: true to activate LLM-assisted semantic matching.
+  # Requires a running LLM provider (e.g., Ollama).
+  llm:
+    enabled: false
+    provider: ollama                  # currently supported: "ollama"
+    confidence-threshold: 0.85        # minimum LLM confidence to accept match
+    ollama:
+      base-url: http://localhost:11434
+      model: llama3.2
+      timeout-seconds: 30
+
+  # ── Security ─────────────────────────────────────────────────────────────
+  # API key-based authentication. Each key is mapped to a role:
+  #   READER  → GET endpoints (entity lookup, synonyms, audit)
+  #   WRITER  → READER + POST resolve, batch, relationships
+  #   ADMIN   → WRITER + review approve/reject
+  security:
+    enabled: true
+    api-key-header: X-API-Key
+    admin-keys:
+      - "CHANGE-ME-admin-key-1"
+    writer-keys:
+      - "CHANGE-ME-writer-key-1"
+    reader-keys:
+      - "CHANGE-ME-reader-key-1"
+
+  # ── CORS ─────────────────────────────────────────────────────────────────
+  cors:
+    enabled: true
+    allowed-origins: "*"
+    allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+    allowed-headers: Content-Type,X-API-Key,Authorization
+    max-age: 86400
+
+  # ── Rate Limiting ────────────────────────────────────────────────────────
+  rate-limit:
+    enabled: true
+    requests-per-second: 100          # sustained rate per API key
+    burst-size: 200                   # max burst capacity

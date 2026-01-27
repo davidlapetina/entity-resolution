@@ -3,9 +3,18 @@ package com.entity.resolution.rest;
 import com.entity.resolution.api.*;
 import com.entity.resolution.core.model.*;
 import com.entity.resolution.rest.dto.*;
+import com.entity.resolution.rest.security.RequiresRole;
+import com.entity.resolution.rest.security.SecurityRole;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,15 +33,23 @@ import java.util.Optional;
  *   <li>Managing relationships</li>
  *   <li>Querying synonyms and audit trail</li>
  * </ul>
+ *
+ * <p>Security: All endpoints require authentication via API key.
+ * GET endpoints require {@link SecurityRole#READER},
+ * POST endpoints require {@link SecurityRole#WRITER}.</p>
  */
 @Path("/api/v1/entities")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@ApplicationScoped
+@Tag(name = "Entity Resolution", description = "Resolve, lookup, and manage entities and their relationships")
+@SecurityRequirement(name = "apiKey")
 public class EntityResolutionResource {
     private static final Logger log = LoggerFactory.getLogger(EntityResolutionResource.class);
 
     private final EntityResolver resolver;
 
+    @Inject
     public EntityResolutionResource(EntityResolver resolver) {
         this.resolver = resolver;
     }
@@ -44,6 +61,13 @@ public class EntityResolutionResource {
      */
     @POST
     @Path("/resolve")
+    @RequiresRole(SecurityRole.WRITER)
+    @Operation(summary = "Resolve a single entity",
+            description = "Resolves an entity name to a canonical entity using exact, fuzzy, and optional LLM matching.")
+    @APIResponse(responseCode = "200", description = "Entity resolved successfully")
+    @APIResponse(responseCode = "400", description = "Invalid request (bad entity type or name)")
+    @APIResponse(responseCode = "401", description = "Missing or invalid API key")
+    @APIResponse(responseCode = "403", description = "Insufficient permissions (requires WRITER)")
     public Response resolve(ResolveRequest request) {
         try {
             EntityType entityType = EntityType.valueOf(request.entityType().toUpperCase());
@@ -74,6 +98,10 @@ public class EntityResolutionResource {
      */
     @POST
     @Path("/batch")
+    @RequiresRole(SecurityRole.WRITER)
+    @Operation(summary = "Resolve entities in batch",
+            description = "Resolves multiple entities with automatic deduplication within the batch.")
+    @APIResponse(responseCode = "200", description = "Batch resolved (may contain partial errors)")
     public Response batchResolve(BatchResolveRequest request) {
         try {
             List<EntityResponse> results = new ArrayList<>();
@@ -117,7 +145,11 @@ public class EntityResolutionResource {
      */
     @GET
     @Path("/{id}")
-    public Response getEntity(@PathParam("id") String entityId) {
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Get entity by ID", description = "Retrieves a canonical entity by its unique identifier.")
+    @APIResponse(responseCode = "200", description = "Entity found")
+    @APIResponse(responseCode = "404", description = "Entity not found")
+    public Response getEntity(@Parameter(description = "Entity UUID") @PathParam("id") String entityId) {
         try {
             Optional<Entity> entity = resolver.getService().getEntityRepository().findById(entityId);
             if (entity.isEmpty()) {
@@ -145,7 +177,9 @@ public class EntityResolutionResource {
      */
     @GET
     @Path("/{id}/synonyms")
-    public Response getSynonyms(@PathParam("id") String entityId) {
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Get synonyms for entity", description = "Returns all known synonyms linked to the entity.")
+    public Response getSynonyms(@Parameter(description = "Entity UUID") @PathParam("id") String entityId) {
         try {
             List<Synonym> synonyms = resolver.getService().getSynonymRepository()
                     .findByEntityId(entityId);
@@ -166,6 +200,10 @@ public class EntityResolutionResource {
      */
     @POST
     @Path("/relationships")
+    @RequiresRole(SecurityRole.WRITER)
+    @Operation(summary = "Create a relationship", description = "Creates a library-managed relationship that auto-migrates during merges.")
+    @APIResponse(responseCode = "201", description = "Relationship created")
+    @APIResponse(responseCode = "404", description = "Source or target entity not found")
     public Response createRelationship(CreateRelationshipRequest request) {
         try {
             Optional<Entity> sourceEntity = resolver.getService().getEntityRepository()
@@ -212,8 +250,10 @@ public class EntityResolutionResource {
      */
     @GET
     @Path("/{id}/relationships")
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Get entity relationships", description = "Returns relationships with optional direction filtering and pagination.")
     public Response getRelationships(
-            @PathParam("id") String entityId,
+            @Parameter(description = "Entity UUID") @PathParam("id") String entityId,
             @QueryParam("direction") @DefaultValue("all") String direction,
             @QueryParam("page") @DefaultValue("0") int page,
             @QueryParam("size") @DefaultValue("20") int size) {
@@ -258,8 +298,10 @@ public class EntityResolutionResource {
      */
     @GET
     @Path("/{id}/audit")
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Get audit trail", description = "Returns the audit trail for an entity with cursor-based pagination.")
     public Response getAuditTrail(
-            @PathParam("id") String entityId,
+            @Parameter(description = "Entity UUID") @PathParam("id") String entityId,
             @QueryParam("cursor") String cursor,
             @QueryParam("limit") @DefaultValue("50") int limit) {
         try {
@@ -283,7 +325,9 @@ public class EntityResolutionResource {
      */
     @GET
     @Path("/{id}/merge-history")
-    public Response getMergeHistory(@PathParam("id") String entityId) {
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Get merge history", description = "Returns the merge history for an entity including all predecessors.")
+    public Response getMergeHistory(@Parameter(description = "Entity UUID") @PathParam("id") String entityId) {
         try {
             var mergeHistory = resolver.getService().getMergeHistory(entityId);
             return Response.ok(mergeHistory).build();
