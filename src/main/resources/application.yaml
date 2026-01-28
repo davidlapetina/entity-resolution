@@ -67,9 +67,11 @@ entity-resolution:
       - "CHANGE-ME-reader-key-1"
 
   # ── CORS ─────────────────────────────────────────────────────────────────
+  # CORS is disabled by default. Enable it and set specific origins for
+  # browser-based clients. Never use "*" with API key authentication.
   cors:
-    enabled: true
-    allowed-origins: "*"
+    enabled: false
+    allowed-origins: "https://your-dashboard.example.com"
     allowed-methods: GET,POST,PUT,DELETE,OPTIONS
     allowed-headers: Content-Type,X-API-Key,Authorization
     max-age: 86400

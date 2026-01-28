@@ -3,6 +3,7 @@ package com.entity.resolution.similarity;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Default blocking key strategy using three complementary approaches:
@@ -16,6 +17,8 @@ import java.util.Set;
  * individual key type provides selectivity (fewer false candidates).</p>
  */
 public class DefaultBlockingKeyStrategy implements BlockingKeyStrategy {
+
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     @Override
     public Set<String> generateKeys(String normalizedName) {
@@ -34,7 +37,7 @@ public class DefaultBlockingKeyStrategy implements BlockingKeyStrategy {
         }
 
         // Sorted token key: first 2 tokens sorted alphabetically
-        String[] tokens = cleaned.split("\\s+");
+        String[] tokens = WHITESPACE.split(cleaned);
         if (tokens.length >= 2) {
             String[] sorted = Arrays.copyOf(tokens, tokens.length);
             Arrays.sort(sorted);

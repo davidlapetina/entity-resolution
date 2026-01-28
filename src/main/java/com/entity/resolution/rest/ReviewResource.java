@@ -39,6 +39,7 @@ import java.util.Map;
 @SecurityRequirement(name = "apiKey")
 public class ReviewResource {
     private static final Logger log = LoggerFactory.getLogger(ReviewResource.class);
+    private static final int MAX_PAGE_SIZE = 500;
 
     private final ReviewService reviewService;
 
@@ -62,7 +63,8 @@ public class ReviewResource {
             @QueryParam("minScore") Double minScore,
             @QueryParam("maxScore") Double maxScore) {
         try {
-            PageRequest pageRequest = PageRequest.of(page, size);
+            int clampedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+            PageRequest pageRequest = PageRequest.of(page, clampedSize);
             Page<ReviewItem> result;
 
             if (entityType != null && !entityType.isBlank()) {
@@ -77,7 +79,7 @@ public class ReviewResource {
         } catch (Exception e) {
             log.error("getPendingReviews.failed error={}", e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(), "/api/v1/reviews"))
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.", "/api/v1/reviews"))
                     .build();
         }
     }
@@ -98,7 +100,7 @@ public class ReviewResource {
         } catch (Exception e) {
             log.error("getPendingCount.failed error={}", e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(), "/api/v1/reviews/count"))
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.", "/api/v1/reviews/count"))
                     .build();
         }
     }
@@ -128,7 +130,7 @@ public class ReviewResource {
         } catch (Exception e) {
             log.error("getReviewItem.failed id={} error={}", reviewId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(),
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/reviews/" + reviewId))
                     .build();
         }
@@ -174,7 +176,7 @@ public class ReviewResource {
         } catch (Exception e) {
             log.error("approveReview.failed id={} error={}", reviewId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(),
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/reviews/" + reviewId + "/approve"))
                     .build();
         }
@@ -217,7 +219,7 @@ public class ReviewResource {
         } catch (Exception e) {
             log.error("rejectReview.failed id={} error={}", reviewId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(),
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/reviews/" + reviewId + "/reject"))
                     .build();
         }

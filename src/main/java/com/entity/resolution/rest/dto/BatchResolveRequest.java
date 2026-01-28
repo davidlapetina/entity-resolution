@@ -9,9 +9,15 @@ public record BatchResolveRequest(
         List<BatchItem> items,
         String sourceSystem
 ) {
+    private static final int MAX_BATCH_SIZE = 1000;
+
     public BatchResolveRequest {
         if (items == null || items.isEmpty()) {
             throw new IllegalArgumentException("items must not be empty");
+        }
+        if (items.size() > MAX_BATCH_SIZE) {
+            throw new IllegalArgumentException(
+                    "batch size " + items.size() + " exceeds maximum of " + MAX_BATCH_SIZE);
         }
     }
 

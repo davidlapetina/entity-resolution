@@ -27,6 +27,12 @@ public class RateLimitFilter implements ContainerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitFilter.class);
 
+    /**
+     * Maximum number of tracked API key buckets to prevent unbounded memory growth.
+     * When exceeded, the oldest buckets are evicted.
+     */
+    private static final int MAX_BUCKETS = 10_000;
+
     private final RateLimitConfig config;
     private final ConcurrentHashMap<String, TokenBucket> buckets = new ConcurrentHashMap<>();
 
@@ -51,6 +57,11 @@ public class RateLimitFilter implements ContainerRequestFilter {
             bucketKey = "__anonymous__";
         }
 
+        // Evict stale buckets if we've exceeded the limit
+        if (buckets.size() > MAX_BUCKETS) {
+            evictStaleBuckets();
+        }
+
         TokenBucket bucket = buckets.computeIfAbsent(bucketKey,
                 k -> new TokenBucket(config.burstSize(), config.requestsPerSecond()));
 
@@ -65,6 +76,15 @@ public class RateLimitFilter implements ContainerRequestFilter {
         }
     }
 
+    /**
+     * Removes buckets that haven't been accessed in over 5 minutes.
+     */
+    private void evictStaleBuckets() {
+        long staleThreshold = System.nanoTime() - 300_000_000_000L; // 5 minutes in nanos
+        buckets.entrySet().removeIf(entry ->
+                entry.getValue().lastAccessNanos() < staleThreshold);
+    }
+
     private static String maskKey(String key) {
         if ("__anonymous__".equals(key)) return "anonymous";
         if (key.length() <= 8) return "****";
@@ -76,19 +96,22 @@ public class RateLimitFilter implements ContainerRequestFilter {
      * Thread-safe using CAS operations.
      */
     static class TokenBucket {
-        private final int maxTokens;
+        private final long maxTokensScaled; // maxTokens * 1000 (fixed-point)
         private final double refillRate; // tokens per nanosecond
         private final AtomicLong tokens; // stored as fixed-point (tokens * 1000)
         private final AtomicLong lastRefillNanos;
+        private volatile long lastAccessNanos;
 
         TokenBucket(int maxTokens, int tokensPerSecond) {
-            this.maxTokens = maxTokens;
+            this.maxTokensScaled = (long) maxTokens * 1000;
             this.refillRate = tokensPerSecond / 1_000_000_000.0;
-            this.tokens = new AtomicLong((long) maxTokens * 1000);
+            this.tokens = new AtomicLong(this.maxTokensScaled);
             this.lastRefillNanos = new AtomicLong(System.nanoTime());
+            this.lastAccessNanos = System.nanoTime();
         }
 
         boolean tryConsume() {
+            lastAccessNanos = System.nanoTime();
             refill();
             while (true) {
                 long current = tokens.get();
@@ -113,10 +136,14 @@ public class RateLimitFilter implements ContainerRequestFilter {
             if (newTokens <= 0) return;
 
             if (lastRefillNanos.compareAndSet(last, now)) {
-                long current = tokens.get();
-                long updated = Math.min((long) maxTokens * 1000, current + newTokens);
-                tokens.set(updated);
+                // Use updateAndGet for atomic token update
+                tokens.updateAndGet(current ->
+                        Math.min(maxTokensScaled, current + newTokens));
             }
+        }
+
+        long lastAccessNanos() {
+            return lastAccessNanos;
         }
 
         // Visible for testing

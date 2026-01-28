@@ -174,7 +174,7 @@ public class EntityResolutionProducer {
     // ── CORS ──────────────────────────────────────────────────
 
     @Inject
-    @ConfigProperty(name = "entity-resolution.cors.enabled", defaultValue = "true")
+    @ConfigProperty(name = "entity-resolution.cors.enabled", defaultValue = "false")
     boolean corsEnabled;
 
     @Inject

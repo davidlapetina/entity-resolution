@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * Engine for applying normalization rules to entity names.
@@ -15,6 +16,7 @@ import java.util.Locale;
  */
 public class NormalizationEngine {
     private static final Logger log = LoggerFactory.getLogger(NormalizationEngine.class);
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private final List<NormalizationRule> rules;
 
@@ -87,9 +89,8 @@ public class NormalizationEngine {
         }
 
         // Final cleanup: lowercase, trim, and collapse whitespace
-        result = result.toLowerCase(Locale.ROOT)
-                .trim()
-                .replaceAll("\\s+", " ");
+        result = WHITESPACE.matcher(result.toLowerCase(Locale.ROOT).trim())
+                .replaceAll(" ");
 
         return result;
     }

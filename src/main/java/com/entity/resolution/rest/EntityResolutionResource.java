@@ -46,6 +46,8 @@ import java.util.Optional;
 @SecurityRequirement(name = "apiKey")
 public class EntityResolutionResource {
     private static final Logger log = LoggerFactory.getLogger(EntityResolutionResource.class);
+    private static final int MAX_PAGE_SIZE = 500;
+    private static final int MAX_AUDIT_LIMIT = 200;
 
     private final EntityResolver resolver;
 
@@ -86,7 +88,7 @@ public class EntityResolutionResource {
         } catch (Exception e) {
             log.error("resolve.failed name='{}' error={}", request.name(), e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(), "/api/v1/entities/resolve"))
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.", "/api/v1/entities/resolve"))
                     .build();
         }
     }
@@ -133,7 +135,7 @@ public class EntityResolutionResource {
         } catch (Exception e) {
             log.error("batchResolve.failed error={}", e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(), "/api/v1/entities/batch"))
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.", "/api/v1/entities/batch"))
                     .build();
         }
     }
@@ -164,7 +166,7 @@ public class EntityResolutionResource {
         } catch (Exception e) {
             log.error("getEntity.failed id={} error={}", entityId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(),
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/entities/" + entityId))
                     .build();
         }
@@ -187,7 +189,7 @@ public class EntityResolutionResource {
         } catch (Exception e) {
             log.error("getSynonyms.failed id={} error={}", entityId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(),
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/entities/" + entityId + "/synonyms"))
                     .build();
         }
@@ -238,7 +240,7 @@ public class EntityResolutionResource {
         } catch (Exception e) {
             log.error("createRelationship.failed error={}", e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(), "/api/v1/relationships"))
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.", "/api/v1/relationships"))
                     .build();
         }
     }
@@ -258,7 +260,8 @@ public class EntityResolutionResource {
             @QueryParam("page") @DefaultValue("0") int page,
             @QueryParam("size") @DefaultValue("20") int size) {
         try {
-            PageRequest pageRequest = PageRequest.of(page, size);
+            int clampedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+            PageRequest pageRequest = PageRequest.of(page, clampedSize);
             // Create a lightweight reference for querying (type doesn't matter for lookups)
             EntityReference ref = EntityReference.of(entityId, EntityType.COMPANY);
             List<Relationship> relationships;
@@ -285,7 +288,7 @@ public class EntityResolutionResource {
         } catch (Exception e) {
             log.error("getRelationships.failed id={} error={}", entityId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(),
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/entities/" + entityId + "/relationships"))
                     .build();
         }
@@ -305,14 +308,15 @@ public class EntityResolutionResource {
             @QueryParam("cursor") String cursor,
             @QueryParam("limit") @DefaultValue("50") int limit) {
         try {
+            int clampedLimit = Math.min(Math.max(limit, 1), MAX_AUDIT_LIMIT);
             CursorPage<?> auditPage = resolver.getService().getAuditService()
-                    .getAuditTrailPaginated(entityId, cursor, limit);
+                    .getAuditTrailPaginated(entityId, cursor, clampedLimit);
 
             return Response.ok(auditPage).build();
         } catch (Exception e) {
             log.error("getAuditTrail.failed id={} error={}", entityId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(),
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/entities/" + entityId + "/audit"))
                     .build();
         }
@@ -334,7 +338,7 @@ public class EntityResolutionResource {
         } catch (Exception e) {
             log.error("getMergeHistory.failed id={} error={}", entityId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ErrorResponse.internalError(e.getMessage(),
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/entities/" + entityId + "/merge-history"))
                     .build();
         }

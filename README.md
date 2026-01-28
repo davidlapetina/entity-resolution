@@ -195,7 +195,7 @@ Keys are mapped to three hierarchical roles:
 
 ### CORS
 
-Cross-origin requests are handled by the built-in CORS filter:
+Cross-origin requests are handled by the built-in CORS filter. CORS is disabled by default; enable it with specific origins for browser-based clients:
 
 ```yaml
 entity-resolution:
@@ -246,7 +246,7 @@ All properties use the prefix `entity-resolution.*` and can be overridden via en
 | `llm.ollama.timeout-seconds` | `30` | Ollama request timeout |
 | `security.enabled` | `true` | Enable API key auth |
 | `security.api-key-header` | `X-API-Key` | Header name for API key |
-| `cors.enabled` | `true` | Enable CORS |
+| `cors.enabled` | `false` | Enable CORS (disabled by default; set specific origins when enabling) |
 | `rate-limit.enabled` | `true` | Enable rate limiting |
 | `rate-limit.requests-per-second` | `100` | Sustained rate per key |
 | `rate-limit.burst-size` | `200` | Burst capacity |

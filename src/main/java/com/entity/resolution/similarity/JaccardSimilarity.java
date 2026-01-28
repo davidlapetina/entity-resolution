@@ -1,8 +1,8 @@
 package com.entity.resolution.similarity;
 
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Jaccard similarity (token overlap).
@@ -10,14 +10,14 @@ import java.util.Set;
  */
 public class JaccardSimilarity implements SimilarityAlgorithm {
 
-    private final String tokenPattern;
+    private final Pattern tokenPattern;
 
     public JaccardSimilarity() {
         this("\\s+");
     }
 
     public JaccardSimilarity(String tokenPattern) {
-        this.tokenPattern = tokenPattern;
+        this.tokenPattern = Pattern.compile(tokenPattern);
     }
 
     @Override
@@ -42,15 +42,18 @@ public class JaccardSimilarity implements SimilarityAlgorithm {
             return 0.0;
         }
 
-        // Calculate intersection
-        Set<String> intersection = new HashSet<>(tokens1);
-        intersection.retainAll(tokens2);
+        // Count intersection without creating a copy
+        int intersectionSize = 0;
+        for (String token : tokens1) {
+            if (tokens2.contains(token)) {
+                intersectionSize++;
+            }
+        }
 
-        // Calculate union
-        Set<String> union = new HashSet<>(tokens1);
-        union.addAll(tokens2);
+        // |union| = |A| + |B| - |intersection|
+        int unionSize = tokens1.size() + tokens2.size() - intersectionSize;
 
-        return (double) intersection.size() / union.size();
+        return (double) intersectionSize / unionSize;
     }
 
     @Override
@@ -62,7 +65,7 @@ public class JaccardSimilarity implements SimilarityAlgorithm {
      * Tokenizes a string into a set of tokens.
      */
     private Set<String> tokenize(String s) {
-        String[] tokens = s.toLowerCase().split(tokenPattern);
+        String[] tokens = tokenPattern.split(s.toLowerCase());
         Set<String> tokenSet = new HashSet<>();
         for (String token : tokens) {
             String trimmed = token.trim();

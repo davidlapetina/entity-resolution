@@ -1,5 +1,7 @@
 package com.entity.resolution.rest.security;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -44,7 +46,8 @@ public class SecurityConfig {
     }
 
     /**
-     * Looks up the role associated with an API key.
+     * Looks up the role associated with an API key using constant-time comparison
+     * to prevent timing attacks.
      *
      * @param apiKey the API key value
      * @return the associated role, or null if the key is not recognized
@@ -53,14 +56,24 @@ public class SecurityConfig {
         if (apiKey == null || apiKey.isBlank()) {
             return null;
         }
-        return apiKeys.get(apiKey);
+        byte[] inputBytes = apiKey.getBytes(StandardCharsets.UTF_8);
+        SecurityRole matched = null;
+        for (Map.Entry<String, SecurityRole> entry : apiKeys.entrySet()) {
+            byte[] keyBytes = entry.getKey().getBytes(StandardCharsets.UTF_8);
+            if (MessageDigest.isEqual(inputBytes, keyBytes)) {
+                matched = entry.getValue();
+            }
+            // Always iterate all keys to prevent timing leaks
+        }
+        return matched;
     }
 
     /**
      * Returns true if the given API key is valid.
+     * Uses constant-time comparison to prevent timing attacks.
      */
     public boolean isValidKey(String apiKey) {
-        return apiKey != null && apiKeys.containsKey(apiKey);
+        return getRoleForKey(apiKey) != null;
     }
 
     /**

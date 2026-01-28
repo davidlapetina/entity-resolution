@@ -478,14 +478,15 @@ class SecurityTest {
         @Test
         @DisplayName("token bucket refills over time")
         void bucketRefills() throws InterruptedException {
-            RateLimitFilter.TokenBucket bucket = new RateLimitFilter.TokenBucket(1, 1000);
+            // Use 10 tokens/sec so refill takes ~100ms per token (avoids timing flakes)
+            RateLimitFilter.TokenBucket bucket = new RateLimitFilter.TokenBucket(1, 10);
 
             // Consume the only token
             assertTrue(bucket.tryConsume());
             assertFalse(bucket.tryConsume());
 
-            // Wait for refill (1000 tokens/sec = 1ms per token)
-            Thread.sleep(10);
+            // Wait for refill (10 tokens/sec = 100ms per token)
+            Thread.sleep(200);
 
             // Should have refilled
             assertTrue(bucket.tryConsume());
