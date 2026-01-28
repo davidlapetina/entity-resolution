@@ -2,6 +2,85 @@
 
 A graph-native entity resolution library for Java 21, built on [FalkorDB](https://www.falkordb.com/). Provides deterministic and probabilistic deduplication, explicit synonym modeling, audit-safe merges, and optional LLM-assisted semantic enrichment.
 
+## Why This Project?
+
+### The Core Problem
+
+Every organization that ingests data from multiple sources faces the same silent corruption: **the same real-world entity appears under different names, spellings, and abbreviations**. "Microsoft Corp", "Microsoft Corporation", "MSFT", "Microsft" (typo), and "Big Blue's competitor" all refer to the same company. Without resolution, your data is fragmented -- your knowledge graph has five nodes where it should have one, your analytics double-count, and your AI models train on noise.
+
+Traditional deduplication tools treat this as a batch ETL problem. This library treats it as a **live, auditable, graph-native operation** -- and that distinction matters.
+
+### Centralized Synonym Registry with Provenance
+
+The most distinctive design choice is modeling synonyms as **first-class graph nodes with confidence scores and provenance**, not as a flat lookup table.
+
+When the system encounters "MSFT" and resolves it to "Microsoft Corporation" at 0.87 confidence via Jaro-Winkler similarity, that fact is recorded: the synonym node stores _who_ created it (system, LLM, or human reviewer), _when_, and _how confident_ the match was. This is fundamentally different from a static alias table because:
+
+- **Confidence is queryable.** You can ask: "show me all synonyms below 0.85 confidence" and surface the weakest links for human review. The system self-documents its own uncertainty.
+- **Provenance is traceable.** Regulated industries (finance, healthcare, government) require audit trails for entity decisions. If two companies were merged in your graph, you need to know why, when, and by whose authority. The immutable merge ledger provides exactly this.
+- **Synonyms accumulate organically.** Each new data source that mentions "MS Corp" strengthens the synonym graph. Over time, the system becomes an institutional memory of how your organization refers to entities -- a centralized, versioned dictionary that no single team could build manually.
+
+This makes the library not just a deduplication engine but a **living knowledge base of entity identity** -- one that improves with every ingestion.
+
+### Why a Graph Database
+
+Entity resolution is inherently a graph problem. Consider what happens when you merge Entity A into Entity B:
+
+- Every relationship pointing to A must be migrated to B
+- Every synonym of A becomes a synonym of B
+- Every entity that was _already_ merged into A must now transitively point to B
+- Every downstream system holding a reference to A must resolve to B
+
+In a relational database, this requires updating foreign keys across multiple tables, handling cascades, and hoping no constraint violations occur. In a graph database, this is a **local traversal**: follow edges from A, rewire them to B, mark A as `MERGED`. The data model maps directly to the operation.
+
+More importantly, **the graph IS the context**. When an LLM needs to decide whether "Big Blue" refers to IBM or to a paint company, the relevant context is: what other entities are nearby in the graph? What relationships exist? What synonyms have already been established? A graph database answers these questions with a single traversal, while a relational database would require multiple joins across normalized tables.
+
+The graph also naturally represents the **merge tree** -- the full history of which entities were absorbed into which. This tree is not just an audit artifact; it is the mechanism by which `EntityReference` handles remain valid after merges. When you hold a reference to an entity that was later merged, the library follows the `MERGED_INTO` edges to find the current canonical node. This is a graph traversal, not a table scan.
+
+### Why FalkorDB
+
+FalkorDB is a deliberate choice over Neo4j, Amazon Neptune, or JanusGraph for several reasons:
+
+1. **Redis-compatible protocol.** FalkorDB speaks the Redis wire protocol. This means every Redis client library, every Redis monitoring tool, every Redis deployment pattern (Sentinel, Cluster, managed services) works out of the box. There is no new infrastructure to learn. If your team knows Redis -- and almost every team does -- they know how to operate FalkorDB. Connection pooling, health checks, and failover use the same patterns as any Redis deployment.
+
+2. **Performance profile.** FalkorDB stores graphs in compressed sparse matrices (GraphBLAS) and executes Cypher queries using linear algebra operations. For the access patterns entity resolution requires -- exact lookups by normalized name, blocking key scans, relationship traversals during merge -- this yields sub-millisecond latency at scales where disk-based graph databases would require index warming. The entire working set fits in memory, which is exactly right for an entity resolution index.
+
+3. **Operational simplicity.** No JVM tuning, no cluster topology planning, no separate storage engine. A single FalkorDB process handles the graph. For teams that already run Redis, adding FalkorDB is a configuration change, not an infrastructure project.
+
+4. **Embeddability.** Because the library communicates via Redis protocol, it can target FalkorDB running as a sidecar, as a managed cloud service, or as an embedded process in test (via Testcontainers). The integration tests in this project demonstrate all three modes.
+
+### Why LLM Integration Changes the Game
+
+Traditional entity resolution relies on string similarity algorithms -- Levenshtein, Jaro-Winkler, Jaccard. These work well for typos ("Microsft" to "Microsoft") and abbreviations ("Corp" to "Corporation") but fail entirely for **semantic equivalences**: "Big Blue" to "IBM", "The Fruit Company" to "Apple Inc", "Alphabet" to "Google's parent company".
+
+The LLM integration in this library is designed with a critical safety constraint: **LLMs suggest, they never decide**. The LLM produces a confidence score and reasoning, but the merge/synonym decision is made by the same threshold logic that governs fuzzy matching. This means:
+
+- LLM hallucinations don't corrupt your graph. A confident but wrong LLM response is treated the same as a high fuzzy score -- it may trigger a synonym or a review queue item, but never an unsupervised destructive merge.
+- The LLM's reasoning is stored in the audit trail, so you can inspect _why_ it thought "Big Blue" matched "IBM" and decide if you trust that reasoning.
+- The LLM provider is pluggable. The library ships with an Ollama provider for local/private deployment, but the `LLMProvider` interface accepts any backend -- OpenAI, Anthropic, a fine-tuned model, or a domain-specific classifier.
+
+The graph database amplifies the LLM's value here. When the LLM evaluates whether two entities match, the system can feed it the **entity's neighborhood** as context: existing synonyms, connected entities, entity types. "Big Blue" alone is ambiguous; "Big Blue" in a graph where it neighbors "Armonk, NY" and "mainframe" is clearly IBM.
+
+### Additional Architectural Strengths
+
+**Opaque references survive merges.** The `EntityReference` pattern solves a problem that most deduplication systems ignore: what happens to the IDs your application already stored? If you resolved "Acme Corp" yesterday and got ID `abc-123`, and today "Acme Corporation" merges into the same entity with ID `def-456`, your stored `abc-123` still works. The reference follows the merge chain transparently. This eliminates an entire class of stale-reference bugs.
+
+**The review queue bridges automation and judgment.** Not every match decision should be automated. The three-tier threshold system (auto-merge / synonym / review) creates a natural workflow: high-confidence matches are handled instantly, medium-confidence matches create synonyms for future resolution, and ambiguous matches enter a queue for human decision. This is pragmatic -- it acknowledges that no algorithm is perfect while still automating the 80% of cases that are straightforward.
+
+**Multi-tenancy via graph isolation.** Each tenant gets a separate graph name in FalkorDB, providing complete data isolation without separate database instances. The `TenantContext` propagation ensures tenant identity follows the request through async operations and virtual threads -- a detail that most multi-tenant libraries get wrong.
+
+**Batch processing with intra-batch deduplication.** When ingesting 10,000 records, the batch context deduplicates within the batch itself before touching the database. If your CSV contains "Acme Corp" on row 5 and "ACME Corporation" on row 500, the batch resolves them against each other without 10,000 individual round-trips to FalkorDB.
+
+### Where This Goes Next
+
+The architecture naturally extends to several high-value directions:
+
+- **Cross-type resolution.** An entity of type COMPANY named "Apple" and an entity of type PRODUCT named "Apple iPhone" have a latent relationship. The graph can surface these cross-type connections for enrichment.
+- **Confidence decay.** Synonym confidence could degrade over time if not reinforced by new data, surfacing stale mappings for re-evaluation.
+- **Federated resolution.** Multiple instances could share a FalkorDB cluster, each contributing synonyms from their domain, building a collective entity dictionary across an organization.
+- **Graph-powered RAG.** The entity graph is a natural retrieval source for Retrieval-Augmented Generation. When a user asks about "Big Blue's Q3 earnings", the entity graph resolves "Big Blue" to "IBM" and retrieves IBM's subgraph as context for the LLM.
+- **Active learning loop.** Human decisions in the review queue can be fed back as training signal for a fine-tuned matching model, gradually reducing the review queue volume.
+
 ## Features
 
 - **Entity Resolution** -- Deduplicate entities using exact matching, fuzzy matching (Levenshtein, Jaro-Winkler, Jaccard), and optional LLM-assisted semantic matching
