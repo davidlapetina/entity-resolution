@@ -346,6 +346,73 @@ public class EntityResolutionResource {
     }
 
     /**
+     * Gets the full context for an entity, including synonyms, relationships,
+     * match decisions, and merge history.
+     *
+     * GET /api/v1/entities/{id}/context
+     */
+    @GET
+    @Path("/{id}/context")
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Get entity context",
+            description = "Returns entity with synonyms, relationships, match decisions, and merge history bundled in a single call.")
+    @APIResponse(responseCode = "200", description = "Entity context returned")
+    @APIResponse(responseCode = "404", description = "Entity not found")
+    public Response getEntityContext(@Parameter(description = "Entity UUID") @PathParam("id") String entityId) {
+        try {
+            Optional<EntityContext> context = resolver.getEntityContext(entityId);
+            if (context.isEmpty()) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(ErrorResponse.notFound(
+                                "Entity not found: " + entityId,
+                                "/api/v1/entities/" + entityId + "/context"))
+                        .build();
+            }
+            return Response.ok(EntityContextResponse.from(context.get())).build();
+        } catch (Exception e) {
+            log.error("getEntityContext.failed id={} error={}", entityId, e.getMessage(), e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
+                            "/api/v1/entities/" + entityId + "/context"))
+                    .build();
+        }
+    }
+
+    /**
+     * Exports the subgraph rooted at an entity for RAG use cases.
+     *
+     * GET /api/v1/entities/{id}/subgraph?depth=1
+     */
+    @GET
+    @Path("/{id}/subgraph")
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Export entity subgraph",
+            description = "Exports the entity's subgraph including related entities, synonyms, relationships, and decisions at the specified depth (1-3). Designed for RAG pipelines.")
+    @APIResponse(responseCode = "200", description = "Entity subgraph returned")
+    @APIResponse(responseCode = "404", description = "Entity not found")
+    public Response getEntitySubgraph(
+            @Parameter(description = "Entity UUID") @PathParam("id") String entityId,
+            @Parameter(description = "Traversal depth (1-3)") @QueryParam("depth") @DefaultValue("1") int depth) {
+        try {
+            Optional<EntitySubgraph> subgraph = resolver.exportEntitySubgraph(entityId, depth);
+            if (subgraph.isEmpty()) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(ErrorResponse.notFound(
+                                "Entity not found: " + entityId,
+                                "/api/v1/entities/" + entityId + "/subgraph"))
+                        .build();
+            }
+            return Response.ok(EntitySubgraphResponse.from(subgraph.get())).build();
+        } catch (Exception e) {
+            log.error("getEntitySubgraph.failed id={} error={}", entityId, e.getMessage(), e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
+                            "/api/v1/entities/" + entityId + "/subgraph"))
+                    .build();
+        }
+    }
+
+    /**
      * Gets match decisions for an entity.
      *
      * GET /api/v1/entities/{id}/decisions

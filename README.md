@@ -97,6 +97,33 @@ The architecture naturally extends to several high-value directions:
 
 ## Release Notes
 
+### v1.1.1 -- Use Case Gap Features
+
+**Metadata Entity Types**
+- Added 7 new entity types for data governance and metadata use cases: `DATASET`, `TABLE`, `SCHEMA`, `DOMAIN`, `SERVICE`, `API`, `DOCUMENT`
+- New `MetadataNormalizationRules` class with rules for version suffixes (`_v1`, `_final`), date suffixes (`_2024`), environment suffixes (`-dev`, `-prod`), and schema prefixes (`dbo.`, `public.`)
+
+**Document Linking**
+- New `linkDocument(entity, documentId, documentName, metadata)` method creates DOCUMENT entities and DOCUMENT_LINK relationships
+- New `getLinkedDocuments(entity)` retrieves all documents linked to an entity
+
+**Entity Context Endpoint**
+- New `getEntityContext(entityId)` returns entity + synonyms + relationships + decisions + merge history in a single call
+- New REST endpoint: `GET /api/v1/entities/{id}/context`
+
+**Entity Subgraph Export for RAG**
+- New `exportEntitySubgraph(entityId, depth)` exports the entity neighborhood for RAG pipelines (depth 1-3)
+- Includes root entity, synonyms, relationships, related entities at depth, and match decisions
+- New REST endpoint: `GET /api/v1/entities/{id}/subgraph?depth=1`
+
+**MCP Tools Module**
+- New `EntityResolutionMcpTools` class builds 5 read-only MCP tool definitions for LLM agents
+- Tools: `resolve_entity`, `get_entity_context`, `get_entity_decisions`, `search_entities`, `get_entity_synonyms`
+- All tools are read-only -- LLMs cannot create, merge, or mutate entity data
+
+**Documentation**
+- Updated `usecases.md` with concrete Java and REST code examples for each use case
+
 ### v1.1.0 -- Explainability & Learning
 
 **Explainable Match Decisions (Decision Graph)**
@@ -218,6 +245,8 @@ All endpoints require an API key in the `X-API-Key` header.
 | `GET` | `/api/v1/entities/{id}/audit` | READER | Get audit trail |
 | `GET` | `/api/v1/entities/{id}/merge-history` | READER | Get merge history |
 | `GET` | `/api/v1/entities/{id}/decisions` | READER | Get match decisions |
+| `GET` | `/api/v1/entities/{id}/context` | READER | Get entity context (synonyms, relationships, decisions, merge history) |
+| `GET` | `/api/v1/entities/{id}/subgraph?depth=1` | READER | Export entity subgraph for RAG (depth 1-3) |
 
 ### Manual Review
 

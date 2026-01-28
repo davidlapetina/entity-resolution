@@ -340,6 +340,42 @@ public class EntityResolver implements AutoCloseable {
         relationshipRepository.delete(relationshipId);
     }
 
+    // ========== Document Linking API ==========
+
+    /**
+     * Links a document to an entity. The document is resolved as a DOCUMENT entity
+     * and a DOCUMENT_LINK relationship is created from the entity to the document.
+     *
+     * @param entity       the entity to link the document to
+     * @param documentId   a unique identifier for the document (e.g., URL, file path, or external ID)
+     * @param documentName the human-readable name of the document
+     * @param metadata     additional properties for the DOCUMENT_LINK relationship
+     * @return the created relationship
+     */
+    public Relationship linkDocument(EntityReference entity, String documentId,
+                                     String documentName, Map<String, Object> metadata) {
+        // Resolve the document as a DOCUMENT entity
+        EntityResolutionResult docResult = resolve(documentName, EntityType.DOCUMENT);
+        EntityReference docRef = docResult.getEntityReference();
+
+        // Create DOCUMENT_LINK relationship with metadata
+        Map<String, Object> props = new java.util.HashMap<>(metadata != null ? metadata : Map.of());
+        props.put("documentId", documentId);
+        return createRelationship(entity, docRef, "DOCUMENT_LINK", props);
+    }
+
+    /**
+     * Gets all documents linked to an entity via DOCUMENT_LINK relationships.
+     *
+     * @param entity the entity to query
+     * @return list of DOCUMENT_LINK relationships
+     */
+    public List<Relationship> getLinkedDocuments(EntityReference entity) {
+        return getOutgoingRelationships(entity).stream()
+                .filter(r -> "DOCUMENT_LINK".equals(r.getRelationshipType()))
+                .toList();
+    }
+
     // ========== Batch API ==========
 
     /**
@@ -404,6 +440,93 @@ public class EntityResolver implements AutoCloseable {
      */
     public void rejectReview(String reviewId, String reviewerId, String notes) {
         reviewService.rejectMatch(reviewId, reviewerId, notes);
+    }
+
+    // ========== Context & Subgraph API ==========
+
+    /**
+     * Gets the full context for an entity, including its synonyms, relationships,
+     * match decisions, and merge history bundled in a single call.
+     *
+     * @param entityId the entity ID
+     * @return the entity context, or empty if the entity is not found
+     */
+    public Optional<EntityContext> getEntityContext(String entityId) {
+        Optional<Entity> entityOpt = service.getEntity(entityId);
+        if (entityOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        Entity entity = entityOpt.get();
+        List<Synonym> synonyms = service.getSynonyms(entityId);
+        EntityReference ref = EntityReference.of(entityId, entity.getType());
+        List<Relationship> relationships = getRelationships(ref);
+        List<MatchDecisionRecord> decisions = getDecisionsForEntity(entityId);
+        List<MergeRecord> mergeHistory = service.getMergeHistory(entityId);
+        return Optional.of(new EntityContext(entity, synonyms, relationships, decisions, mergeHistory));
+    }
+
+    /**
+     * Exports the subgraph rooted at an entity, including related entities
+     * up to the specified depth. Designed for RAG use cases.
+     *
+     * @param entityId the root entity ID
+     * @param depth    traversal depth (clamped to 1-3)
+     * @return the entity subgraph, or empty if the entity is not found
+     */
+    public Optional<EntitySubgraph> exportEntitySubgraph(String entityId, int depth) {
+        int clampedDepth = Math.max(1, Math.min(depth, 3));
+
+        Optional<Entity> entityOpt = service.getEntity(entityId);
+        if (entityOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        Entity rootEntity = entityOpt.get();
+        List<Synonym> synonyms = service.getSynonyms(entityId);
+        EntityReference rootRef = EntityReference.of(entityId, rootEntity.getType());
+
+        // Collect relationships and related entities at increasing depth
+        java.util.Set<String> visitedIds = new java.util.HashSet<>();
+        visitedIds.add(entityId);
+        List<Relationship> allRelationships = new java.util.ArrayList<>();
+        List<Entity> relatedEntities = new java.util.ArrayList<>();
+
+        java.util.Set<String> currentLayer = java.util.Set.of(entityId);
+
+        for (int d = 0; d < clampedDepth; d++) {
+            java.util.Set<String> nextLayer = new java.util.HashSet<>();
+            for (String currentId : currentLayer) {
+                EntityReference ref = EntityReference.of(currentId, rootEntity.getType());
+                List<Relationship> rels = getRelationships(ref);
+                for (Relationship rel : rels) {
+                    allRelationships.add(rel);
+                    String otherId = rel.getSourceEntityId().equals(currentId)
+                            ? rel.getTargetEntityId()
+                            : rel.getSourceEntityId();
+                    if (visitedIds.add(otherId)) {
+                        nextLayer.add(otherId);
+                        service.getEntity(otherId).ifPresent(relatedEntities::add);
+                    }
+                }
+            }
+            currentLayer = nextLayer;
+        }
+
+        // Deduplicate relationships
+        List<Relationship> dedupedRels = allRelationships.stream()
+                .distinct()
+                .toList();
+
+        List<MatchDecisionRecord> decisions = getDecisionsForEntity(entityId);
+
+        Map<String, Object> metadata = Map.of(
+                "entityCount", 1 + relatedEntities.size(),
+                "relationshipCount", dedupedRels.size(),
+                "synonymCount", synonyms.size()
+        );
+
+        return Optional.of(new EntitySubgraph(
+                rootEntity, synonyms, dedupedRels, relatedEntities,
+                decisions, clampedDepth, metadata));
     }
 
     // ========== Health Check API ==========

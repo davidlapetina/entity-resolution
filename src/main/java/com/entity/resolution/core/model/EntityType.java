@@ -9,7 +9,14 @@ public enum EntityType {
     PERSON("Person"),
     ORGANIZATION("Organization"),
     PRODUCT("Product"),
-    LOCATION("Location");
+    LOCATION("Location"),
+    DATASET("Dataset"),
+    TABLE("Table"),
+    SCHEMA("Schema"),
+    DOMAIN("Domain"),
+    SERVICE("Service"),
+    API("Api"),
+    DOCUMENT("Document");
 
     private final String label;
 
