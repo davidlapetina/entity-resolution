@@ -6,7 +6,7 @@ import com.entity.resolution.api.PageRequest;
 /**
  * Interface for managing the manual review queue.
  * Review items are created when entity resolution produces matches
- * with confidence in the review range (typically 0.60 <= score < 0.80).
+ * with confidence in the review range (typically 0.60 &lt;= score &lt; 0.80).
  */
 public interface ReviewQueue {
 

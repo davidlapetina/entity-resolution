@@ -51,7 +51,7 @@ public class ReviewResource {
     /**
      * Gets pending review items with pagination.
      *
-     * GET /api/v1/reviews?page=0&size=20
+     * GET /api/v1/reviews?page=0&amp;size=20
      */
     @GET
     @RequiresRole(SecurityRole.READER)

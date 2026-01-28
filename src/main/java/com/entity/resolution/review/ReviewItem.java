@@ -7,7 +7,7 @@ import java.util.UUID;
 /**
  * Represents a review item in the manual review queue.
  * Created when entity resolution produces a match with confidence
- * in the review range (typically 0.60 <= score < 0.80).
+ * in the review range (typically 0.60 &lt;= score &lt; 0.80).
  */
 public class ReviewItem {
 
