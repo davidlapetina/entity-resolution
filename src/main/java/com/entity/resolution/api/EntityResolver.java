@@ -4,6 +4,10 @@ import com.entity.resolution.audit.AuditRepository;
 import com.entity.resolution.audit.AuditService;
 import com.entity.resolution.audit.MergeLedger;
 import com.entity.resolution.core.model.*;
+import com.entity.resolution.decision.ConfidenceDecayEngine;
+import com.entity.resolution.decision.MatchDecisionRecord;
+import com.entity.resolution.decision.MatchDecisionRepository;
+import com.entity.resolution.decision.ReviewDecisionRepository;
 import com.entity.resolution.graph.*;
 import com.entity.resolution.health.*;
 import com.entity.resolution.llm.LLMEnricher;
@@ -85,6 +89,9 @@ public class EntityResolver implements AutoCloseable {
     private final TracingService tracingService;
     private final HealthCheckRegistry healthCheckRegistry;
     private final ReviewService reviewService;
+    private final MatchDecisionRepository matchDecisionRepository;
+    private final ReviewDecisionRepository reviewDecisionRepository;
+    private final ConfidenceDecayEngine confidenceDecayEngine;
 
     private EntityResolver(Builder builder) {
         this.connection = builder.connection;
@@ -142,17 +149,26 @@ public class EntityResolver implements AutoCloseable {
             mergeEngine.addMergeListener(mergeListener);
         }
 
+        // Initialize v1.1 decision repositories and confidence decay engine
+        this.matchDecisionRepository = new MatchDecisionRepository(connection);
+        this.reviewDecisionRepository = new ReviewDecisionRepository(connection);
+        this.confidenceDecayEngine = new ConfidenceDecayEngine(
+                builder.options.getConfidenceDecayLambda(),
+                builder.options.getReinforcementCap());
+
         // Initialize review service
         ReviewQueue reviewQueue = builder.reviewQueue != null
                 ? builder.reviewQueue : new InMemoryReviewQueue();
-        this.reviewService = new ReviewService(reviewQueue, mergeEngine, auditService);
+        this.reviewService = new ReviewService(reviewQueue, mergeEngine, auditService,
+                reviewDecisionRepository, matchDecisionRepository, synonymRepository,
+                confidenceDecayEngine);
 
         // Create main service
         this.service = new EntityResolutionService(
                 entityRepository, synonymRepository, duplicateRepository,
                 normalizationEngine, similarityScorer, mergeEngine, llmEnricher, auditService,
                 builder.options, blockingKeyStrategy, cache, lock, metricsService, tracingService,
-                reviewService
+                reviewService, matchDecisionRepository, confidenceDecayEngine
         );
 
         // Create indexes if requested
@@ -422,6 +438,34 @@ public class EntityResolver implements AutoCloseable {
      */
     public RelationshipRepository getRelationshipRepository() {
         return relationshipRepository;
+    }
+
+    /**
+     * Gets the match decision repository (v1.1).
+     */
+    public MatchDecisionRepository getMatchDecisionRepository() {
+        return matchDecisionRepository;
+    }
+
+    /**
+     * Gets the review decision repository (v1.1).
+     */
+    public ReviewDecisionRepository getReviewDecisionRepository() {
+        return reviewDecisionRepository;
+    }
+
+    /**
+     * Gets the confidence decay engine (v1.1).
+     */
+    public ConfidenceDecayEngine getConfidenceDecayEngine() {
+        return confidenceDecayEngine;
+    }
+
+    /**
+     * Gets all match decisions involving a given entity (v1.1).
+     */
+    public List<MatchDecisionRecord> getDecisionsForEntity(String entityId) {
+        return service.getDecisionsForEntity(entityId);
     }
 
     /**

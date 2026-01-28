@@ -76,7 +76,7 @@ The graph database amplifies the LLM's value here. When the LLM evaluates whethe
 The architecture naturally extends to several high-value directions:
 
 - **Cross-type resolution.** An entity of type COMPANY named "Apple" and an entity of type PRODUCT named "Apple iPhone" have a latent relationship. The graph can surface these cross-type connections for enrichment.
-- **Confidence decay.** Synonym confidence could degrade over time if not reinforced by new data, surfacing stale mappings for re-evaluation.
+- **Confidence decay.** _(Now implemented in v1.1.)_ Synonym confidence degrades over time if not reinforced by new data, surfacing stale mappings for re-evaluation.
 - **Federated resolution.** Multiple instances could share a FalkorDB cluster, each contributing synonyms from their domain, building a collective entity dictionary across an organization.
 - **Graph-powered RAG.** The entity graph is a natural retrieval source for Retrieval-Augmented Generation. When a user asks about "Big Blue's Q3 earnings", the entity graph resolves "Big Blue" to "IBM" and retrieves IBM's subgraph as context for the LLM.
 - **Active learning loop.** Human decisions in the review queue can be fed back as training signal for a fine-tuned matching model, gradually reducing the review queue volume.
@@ -91,6 +91,36 @@ The architecture naturally extends to several high-value directions:
 - **REST API** -- Jakarta RS endpoints with API key authentication, role-based access control, and OpenAPI specification
 - **Quarkus Integration** -- CDI producers and YAML configuration for drop-in Quarkus deployment
 - **LLM Integration** -- Optional Ollama integration for semantic entity matching (e.g., "Big Blue" to IBM)
+- **Explainable Decisions** -- Every match evaluation produces an immutable `MatchDecision` node recording score breakdowns, thresholds, and outcomes
+- **Confidence Decay & Reinforcement** -- Synonym confidence decays exponentially over time and is boosted logarithmically by repeated observations
+- **Human-as-Signal** -- Review approve/reject decisions are persisted as `ReviewDecision` nodes and feed back into synonym confidence
+
+## Release Notes
+
+### v1.1.0 -- Explainability & Learning
+
+**Explainable Match Decisions (Decision Graph)**
+- Every fuzzy match evaluation now produces an immutable `MatchDecision` node in the graph, recording full score breakdowns (Levenshtein, Jaro-Winkler, Jaccard, optional LLM), threshold snapshots, and the outcome (AUTO_MERGE, SYNONYM, REVIEW, NO_MATCH)
+- Decision nodes are linked to input and candidate entities via `EVALUATED_INPUT` and `EVALUATED_CANDIDATE` edges
+- New REST endpoint: `GET /api/v1/entities/{id}/decisions` returns all match decisions involving an entity
+
+**Confidence Decay & Reinforcement Engine**
+- Synonym confidence now decays exponentially over time: `effective = base * exp(-lambda * days) + reinforcementBoost(supportCount)`
+- Synonyms are automatically reinforced (support count incremented) when re-encountered during resolution
+- Logarithmic reinforcement boost with configurable cap prevents runaway confidence inflation
+- New `Synonym` fields: `lastConfirmedAt`, `supportCount`
+- Configurable via `confidence.decay-lambda` (default 0.001) and `confidence.reinforcement-cap` (default 0.15)
+
+**Immutable Human Review Decisions (Human-as-Signal)**
+- Approve/reject actions now produce immutable `ReviewDecision` nodes in the graph
+- Review decisions are linked to the original `MatchDecision` via a `CONFIRMS` edge
+- Approvals trigger synonym reinforcement; rejections apply negative reinforcement (confidence reduction)
+- New REST endpoint: `GET /api/v1/reviews/{id}/decision` returns the review decision for a review item
+
+**Backward Compatibility**
+- All v1.0 APIs continue to work unchanged; new features are additive
+- Existing graphs without decision nodes work seamlessly -- decision tracking is optional
+- Default decay parameters produce negligible confidence change for short-lived deployments
 
 ## Requirements
 
@@ -187,6 +217,7 @@ All endpoints require an API key in the `X-API-Key` header.
 | `GET` | `/api/v1/entities/{id}/relationships` | READER | Get entity relationships |
 | `GET` | `/api/v1/entities/{id}/audit` | READER | Get audit trail |
 | `GET` | `/api/v1/entities/{id}/merge-history` | READER | Get merge history |
+| `GET` | `/api/v1/entities/{id}/decisions` | READER | Get match decisions |
 
 ### Manual Review
 
@@ -197,6 +228,7 @@ All endpoints require an API key in the `X-API-Key` header.
 | `GET` | `/api/v1/reviews/{id}` | READER | Get review item |
 | `POST` | `/api/v1/reviews/{id}/approve` | ADMIN | Approve review (triggers merge) |
 | `POST` | `/api/v1/reviews/{id}/reject` | ADMIN | Reject review |
+| `GET` | `/api/v1/reviews/{id}/decision` | READER | Get review decision |
 
 ### Example: Resolve an Entity
 
@@ -329,6 +361,8 @@ All properties use the prefix `entity-resolution.*` and can be overridden via en
 | `rate-limit.enabled` | `true` | Enable rate limiting |
 | `rate-limit.requests-per-second` | `100` | Sustained rate per key |
 | `rate-limit.burst-size` | `200` | Burst capacity |
+| `confidence.decay-lambda` | `0.001` | Exponential decay rate for synonym confidence |
+| `confidence.reinforcement-cap` | `0.15` | Max confidence boost from repeated observations |
 
 See [`src/main/resources/application.yaml`](src/main/resources/application.yaml) for the complete reference configuration.
 
@@ -419,14 +453,72 @@ executor.submit(TenantContext.propagate(() -> {
 | 0.60 - 0.80 | REVIEW | Flag for manual review |
 | < 0.60 | NO_MATCH | Create new entity |
 
+## Explainability & Learning (v1.1)
+
+### Decision Graph
+
+Every fuzzy match evaluation produces an immutable `MatchDecision` node in the graph. This node records the full score breakdown (Levenshtein, Jaro-Winkler, Jaccard, optional LLM score), the threshold snapshot at evaluation time, and the outcome (AUTO_MERGE, SYNONYM, REVIEW, or NO_MATCH). Decision nodes are linked to both the input and candidate entities via `EVALUATED_INPUT` and `EVALUATED_CANDIDATE` edges.
+
+```java
+// Query all match decisions involving an entity
+List<MatchDecisionRecord> decisions = resolver.getDecisionsForEntity(entityId);
+
+for (MatchDecisionRecord d : decisions) {
+    System.out.printf("Candidate: %s, Score: %.3f (%s), Outcome: %s%n",
+        d.getCandidateEntityId(), d.getFinalScore(),
+        d.getEvaluator(), d.getOutcome());
+}
+```
+
+### Confidence Decay & Reinforcement
+
+Synonym confidence decays exponentially over time using the formula:
+
+```
+effectiveConfidence = baseConfidence * exp(-lambda * daysSinceLastConfirmed) + reinforcementBoost(supportCount)
+```
+
+The reinforcement boost uses a logarithmic curve capped at a configurable maximum, providing diminishing returns for repeated observations. This means frequently-seen synonyms maintain high confidence while stale synonyms naturally surface for re-evaluation.
+
+```yaml
+entity-resolution:
+  confidence:
+    decay-lambda: 0.001          # Decay rate (higher = faster decay)
+    reinforcement-cap: 0.15      # Max boost from repeated observations
+```
+
+When a synonym is re-encountered during resolution, it is automatically reinforced (support count incremented, timestamp updated). When a review is rejected, the synonym receives negative reinforcement (confidence reduced).
+
+### Human Review Decisions
+
+Approve and reject actions in the review queue now produce immutable `ReviewDecision` nodes in the graph. These are linked to the original `MatchDecision` via a `CONFIRMS` edge, creating a full audit trail from fuzzy match evaluation through human judgment.
+
+```java
+// Approve -- creates ReviewDecision, reinforces synonyms, then merges
+resolver.approveReview(reviewId, "reviewer-1", "Confirmed same entity");
+
+// Reject -- creates ReviewDecision, applies negative reinforcement
+resolver.rejectReview(reviewId, "reviewer-1", "Different entities");
+```
+
 ## Graph Data Model
 
 ```cypher
 (:Entity {id, canonicalName, normalizedName, type, confidenceScore, status, createdAt, updatedAt})
-(:Synonym {id, value, normalizedValue, source, confidence, createdAt})
+(:Synonym {id, value, normalizedValue, source, confidence, lastConfirmedAt, supportCount, createdAt})
 (:Synonym)-[:SYNONYM_OF]->(:Entity)
 (:Entity {status: "MERGED"})-[:MERGED_INTO]->(:Entity {status: "ACTIVE"})
 (:Entity)-[:LIBRARY_REL {type: String}]->(:Entity)
+
+// v1.1 Decision Graph
+(:MatchDecision {id, inputEntityTempId, candidateEntityId, entityType, exactScore, levenshteinScore,
+                 jaroWinklerScore, jaccardScore, llmScore, graphContextScore, finalScore, outcome,
+                 autoMergeThreshold, synonymThreshold, reviewThreshold, evaluator, evaluatedAt})
+(:MatchDecision)-[:EVALUATED_INPUT]->(:Entity)
+(:MatchDecision)-[:EVALUATED_CANDIDATE]->(:Entity)
+
+(:ReviewDecision {id, reviewId, action, reviewerId, rationale, decidedAt})
+(:ReviewDecision)-[:CONFIRMS]->(:MatchDecision)
 ```
 
 ## Building from Source

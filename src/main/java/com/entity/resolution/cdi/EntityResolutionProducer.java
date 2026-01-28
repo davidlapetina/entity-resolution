@@ -193,6 +193,16 @@ public class EntityResolutionProducer {
     @ConfigProperty(name = "entity-resolution.cors.max-age", defaultValue = "86400")
     long corsMaxAge;
 
+    // ── Confidence Decay (v1.1) ─────────────────────────────────
+
+    @Inject
+    @ConfigProperty(name = "entity-resolution.confidence.decay-lambda", defaultValue = "0.001")
+    double confidenceDecayLambda;
+
+    @Inject
+    @ConfigProperty(name = "entity-resolution.confidence.reinforcement-cap", defaultValue = "0.15")
+    double confidenceReinforcementCap;
+
     // ── Rate Limiting ─────────────────────────────────────────
 
     @Inject
@@ -238,6 +248,8 @@ public class EntityResolutionProducer {
                 .cacheTtlSeconds(cacheTtlSeconds)
                 .useLLM(llmEnabled)
                 .llmConfidenceThreshold(llmConfidenceThreshold)
+                .confidenceDecayLambda(confidenceDecayLambda)
+                .reinforcementCap(confidenceReinforcementCap)
                 .build();
 
         EntityResolver.Builder builder = EntityResolver.builder()

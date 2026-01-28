@@ -101,6 +101,52 @@ When Micrometer is on the classpath, the library emits metrics through `MetricsS
 
 ## Common Issues and Troubleshooting
 
+### Querying the Decision Graph (v1.1)
+
+The decision graph provides full explainability for match evaluations and human review decisions:
+
+```java
+// Get all match decisions involving an entity
+List<MatchDecisionRecord> decisions = resolver.getDecisionsForEntity(entityId);
+
+// Inspect score breakdown
+for (MatchDecisionRecord d : decisions) {
+    System.out.printf("Candidate: %s | Final: %.3f | Outcome: %s%n",
+        d.getCandidateEntityId(), d.getFinalScore(), d.getOutcome());
+    System.out.printf("  Levenshtein: %.3f | Jaro-Winkler: %.3f | Jaccard: %.3f%n",
+        d.getLevenshteinScore(), d.getJaroWinklerScore(), d.getJaccardScore());
+    System.out.printf("  Thresholds: merge=%.2f synonym=%.2f review=%.2f%n",
+        d.getAutoMergeThreshold(), d.getSynonymThreshold(), d.getReviewThreshold());
+}
+
+// Get review decision for a review item
+ReviewDecision reviewDecision = resolver.getReviewDecisionRepository()
+    .findLatestByReviewId(reviewId);
+```
+
+### Synonym Confidence Decay
+
+Synonym effective confidence is computed lazily using exponential decay:
+
+```
+effectiveConfidence = baseConfidence * exp(-lambda * daysSinceLastConfirmed) + reinforcementBoost
+```
+
+To check which synonyms have decayed below thresholds:
+
+```java
+ConfidenceDecayEngine engine = resolver.getConfidenceDecayEngine();
+List<Synonym> synonyms = resolver.getService().getSynonymRepository().findByEntityId(entityId);
+
+for (Synonym s : synonyms) {
+    double effective = engine.computeEffectiveConfidence(s);
+    boolean needsReview = engine.shouldTriggerReview(s, 0.80);
+    boolean isStale = engine.isStale(s, 0.60);
+    System.out.printf("Synonym: %s | base=%.3f | effective=%.3f | stale=%s%n",
+        s.getValue(), s.getConfidence(), effective, isStale);
+}
+```
+
 ### Issue: Connection Refused
 
 **Symptoms:**

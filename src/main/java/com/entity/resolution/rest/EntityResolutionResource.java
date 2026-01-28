@@ -2,6 +2,7 @@ package com.entity.resolution.rest;
 
 import com.entity.resolution.api.*;
 import com.entity.resolution.core.model.*;
+import com.entity.resolution.decision.MatchDecisionRecord;
 import com.entity.resolution.rest.dto.*;
 import com.entity.resolution.rest.security.RequiresRole;
 import com.entity.resolution.rest.security.SecurityRole;
@@ -340,6 +341,34 @@ public class EntityResolutionResource {
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
                     .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/entities/" + entityId + "/merge-history"))
+                    .build();
+        }
+    }
+
+    /**
+     * Gets match decisions for an entity.
+     *
+     * GET /api/v1/entities/{id}/decisions
+     */
+    @GET
+    @Path("/{id}/decisions")
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Get match decisions",
+            description = "Returns all match decisions involving this entity, including score breakdowns, thresholds, and outcomes.")
+    @APIResponse(responseCode = "200", description = "Match decisions returned")
+    public Response getDecisions(
+            @Parameter(description = "Entity UUID") @PathParam("id") String entityId) {
+        try {
+            List<MatchDecisionRecord> decisions = resolver.getDecisionsForEntity(entityId);
+            List<MatchDecisionResponse> response = decisions.stream()
+                    .map(MatchDecisionResponse::from)
+                    .toList();
+            return Response.ok(response).build();
+        } catch (Exception e) {
+            log.error("getDecisions.failed id={} error={}", entityId, e.getMessage(), e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
+                            "/api/v1/entities/" + entityId + "/decisions"))
                     .build();
         }
     }

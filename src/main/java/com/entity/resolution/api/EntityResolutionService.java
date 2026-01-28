@@ -5,6 +5,10 @@ import com.entity.resolution.audit.AuditService;
 import com.entity.resolution.cache.NoOpResolutionCache;
 import com.entity.resolution.cache.ResolutionCache;
 import com.entity.resolution.core.model.*;
+import com.entity.resolution.decision.ConfidenceDecayEngine;
+import com.entity.resolution.decision.DecisionOutcome;
+import com.entity.resolution.decision.MatchDecisionRecord;
+import com.entity.resolution.decision.MatchDecisionRepository;
 import com.entity.resolution.graph.EntityRepository;
 import com.entity.resolution.graph.InputSanitizer;
 import com.entity.resolution.graph.SynonymRepository;
@@ -19,21 +23,23 @@ import com.entity.resolution.metrics.MetricsService;
 import com.entity.resolution.metrics.NoOpMetricsService;
 import com.entity.resolution.review.ReviewItem;
 import com.entity.resolution.review.ReviewService;
+import com.entity.resolution.similarity.CompositeSimilarityScorer;
+import com.entity.resolution.similarity.BlockingKeyStrategy;
+import com.entity.resolution.similarity.DefaultBlockingKeyStrategy;
 import com.entity.resolution.tracing.NoOpTracingService;
 import com.entity.resolution.tracing.Span;
 import com.entity.resolution.tracing.TracingService;
 import com.entity.resolution.rules.NormalizationEngine;
-import com.entity.resolution.similarity.BlockingKeyStrategy;
-import com.entity.resolution.similarity.CompositeSimilarityScorer;
-import com.entity.resolution.similarity.DefaultBlockingKeyStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
@@ -58,6 +64,8 @@ public class EntityResolutionService {
     private final MetricsService metricsService;
     private final TracingService tracingService;
     private final ReviewService reviewService;
+    private final MatchDecisionRepository matchDecisionRepository;
+    private final ConfidenceDecayEngine confidenceDecayEngine;
 
     public EntityResolutionService(
             EntityRepository entityRepository,
@@ -179,6 +187,30 @@ public class EntityResolutionService {
             MetricsService metricsService,
             TracingService tracingService,
             ReviewService reviewService) {
+        this(entityRepository, synonymRepository, duplicateRepository, normalizationEngine,
+                similarityScorer, mergeEngine, llmEnricher, auditService, defaultOptions,
+                blockingKeyStrategy, resolutionCache, distributedLock,
+                metricsService, tracingService, reviewService, null, null);
+    }
+
+    public EntityResolutionService(
+            EntityRepository entityRepository,
+            SynonymRepository synonymRepository,
+            DuplicateEntityRepository duplicateRepository,
+            NormalizationEngine normalizationEngine,
+            CompositeSimilarityScorer similarityScorer,
+            MergeEngine mergeEngine,
+            LLMEnricher llmEnricher,
+            AuditService auditService,
+            ResolutionOptions defaultOptions,
+            BlockingKeyStrategy blockingKeyStrategy,
+            ResolutionCache resolutionCache,
+            DistributedLock distributedLock,
+            MetricsService metricsService,
+            TracingService tracingService,
+            ReviewService reviewService,
+            MatchDecisionRepository matchDecisionRepository,
+            ConfidenceDecayEngine confidenceDecayEngine) {
         this.entityRepository = entityRepository;
         this.synonymRepository = synonymRepository;
         this.duplicateRepository = duplicateRepository;
@@ -194,6 +226,8 @@ public class EntityResolutionService {
         this.metricsService = metricsService != null ? metricsService : new NoOpMetricsService();
         this.tracingService = tracingService != null ? tracingService : new NoOpTracingService();
         this.reviewService = reviewService;
+        this.matchDecisionRepository = matchDecisionRepository;
+        this.confidenceDecayEngine = confidenceDecayEngine;
     }
 
     /**
@@ -304,8 +338,8 @@ public class EntityResolutionService {
      */
     private EntityResolutionResult resolveInternal(String entityName, String normalizedName,
                                                      EntityType entityType, ResolutionOptions options) {
-        // Create canonical ID resolver for this resolution context
-        Supplier<String> canonicalIdResolver = () -> resolveCanonicalId(entityName, entityType);
+        // Generate a temp ID for this resolution attempt (used in decision records)
+        String inputTempId = UUID.randomUUID().toString();
 
         // Step 2: Try exact match on normalized name
         List<Entity> exactMatches = entityRepository.findByNormalizedName(normalizedName, entityType);
@@ -340,6 +374,10 @@ public class EntityResolutionService {
                 Entity match = entityOpt.get();
                 log.info("Synonym match found: {} via synonym '{}'",
                         match.getCanonicalName(), synMatch.matchedSynonym());
+
+                // v1.1: Reinforce synonym on re-encounter
+                reinforceSynonymMatch(match.getId(), normalizedName);
+
                 List<Synonym> synonyms = synonymRepository.findByEntityId(match.getId());
                 return EntityResolutionResult.builder()
                         .canonicalEntity(match)
@@ -360,7 +398,7 @@ public class EntityResolutionService {
         }
 
         // Step 4: Fuzzy matching against all active entities
-        MatchResult bestMatch = findBestFuzzyMatch(entityName, normalizedName, entityType, options);
+        MatchResult bestMatch = findBestFuzzyMatch(entityName, normalizedName, entityType, options, inputTempId);
 
         if (bestMatch.hasMatch()) {
             return handleMatchResult(entityName, normalizedName, entityType, bestMatch, options);
@@ -368,6 +406,25 @@ public class EntityResolutionService {
 
         // Step 5: No match found - create new entity
         return createNewEntity(entityName, normalizedName, entityType, options);
+    }
+
+    /**
+     * Reinforces the synonym that matched during synonym lookup (v1.1).
+     * Increments supportCount and updates lastConfirmedAt for the matching synonym.
+     */
+    private void reinforceSynonymMatch(String entityId, String normalizedValue) {
+        try {
+            List<Synonym> synonyms = synonymRepository.findByEntityId(entityId);
+            for (Synonym synonym : synonyms) {
+                if (normalizedValue.equals(synonym.getNormalizedValue())) {
+                    synonymRepository.reinforce(synonym.getId());
+                    log.debug("Reinforced synonym '{}' (id={})", synonym.getValue(), synonym.getId());
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to reinforce synonym for entity {}: {}", entityId, e.getMessage());
+        }
     }
 
     /**
@@ -438,9 +495,13 @@ public class EntityResolutionService {
      * Finds the best fuzzy match among active entities.
      * Uses blocking keys to narrow candidates first, falling back to full scan
      * if no blocking key candidates are found.
+     *
+     * <p>v1.1: Builds and persists a {@link MatchDecisionRecord} for every candidate
+     * evaluation, including NO_MATCH outcomes.</p>
      */
     private MatchResult findBestFuzzyMatch(String originalName, String normalizedName,
-                                            EntityType entityType, ResolutionOptions options) {
+                                            EntityType entityType, ResolutionOptions options,
+                                            String inputTempId) {
         Span fuzzySpan = tracingService.startSpan("entity.fuzzyMatch",
                 Map.of("entityType", entityType.name(), "normalizedName", normalizedName));
 
@@ -463,10 +524,44 @@ public class EntityResolutionService {
         }
 
         MatchResult bestMatch = MatchResult.noMatch();
+        List<MatchDecisionRecord> decisions = new ArrayList<>();
 
         for (Entity candidate : candidates) {
-            double score = similarityScorer.compute(normalizedName, candidate.getNormalizedName());
+            CompositeSimilarityScorer.SimilarityBreakdown breakdown =
+                    similarityScorer.computeWithBreakdown(normalizedName, candidate.getNormalizedName());
+            double score = breakdown.compositeScore();
             metricsService.recordSimilarityScore(score);
+
+            // Determine outcome for this candidate
+            DecisionOutcome outcome;
+            if (score >= options.getAutoMergeThreshold()) {
+                outcome = DecisionOutcome.AUTO_MERGE;
+            } else if (score >= options.getSynonymThreshold()) {
+                outcome = DecisionOutcome.SYNONYM;
+            } else if (score >= options.getReviewThreshold()) {
+                outcome = DecisionOutcome.REVIEW;
+            } else {
+                outcome = DecisionOutcome.NO_MATCH;
+            }
+
+            // Build decision record for this candidate
+            MatchDecisionRecord decision = MatchDecisionRecord.builder()
+                    .inputEntityTempId(inputTempId)
+                    .candidateEntityId(candidate.getId())
+                    .entityType(entityType)
+                    .exactScore(normalizedName.equals(candidate.getNormalizedName()) ? 1.0 : 0.0)
+                    .levenshteinScore(breakdown.levenshteinScore())
+                    .jaroWinklerScore(breakdown.jaroWinklerScore())
+                    .jaccardScore(breakdown.jaccardScore())
+                    .finalScore(score)
+                    .outcome(outcome)
+                    .autoMergeThreshold(options.getAutoMergeThreshold())
+                    .synonymThreshold(options.getSynonymThreshold())
+                    .reviewThreshold(options.getReviewThreshold())
+                    .evaluator("SYSTEM")
+                    .build();
+            decisions.add(decision);
+
             if (score > bestMatch.score()) {
                 bestMatch = MatchResult.of(
                         score,
@@ -479,12 +574,16 @@ public class EntityResolutionService {
             }
         }
 
+        // Persist all decisions before any merge/synonym action
+        persistDecisions(decisions);
+
         log.debug("Best fuzzy match: score={}, decision={}, entity={}",
                 bestMatch.score(), bestMatch.decision(), bestMatch.matchedName());
 
         fuzzySpan.setAttribute("candidateCount", candidates.size());
         fuzzySpan.setAttribute("bestScore", String.valueOf(bestMatch.score()));
         fuzzySpan.setAttribute("decision", bestMatch.decision().name());
+        fuzzySpan.setAttribute("decisionsRecorded", decisions.size());
 
         // Consider LLM enrichment if score is in the uncertain range
         if (options.isUseLLM() && bestMatch.shouldEnrichWithLLM() && llmEnricher.isAvailable()) {
@@ -513,6 +612,22 @@ public class EntityResolutionService {
         fuzzySpan.setStatus(Span.SpanStatus.OK);
         fuzzySpan.close();
         return bestMatch;
+    }
+
+    /**
+     * Persists match decision records to the graph (best-effort).
+     */
+    private void persistDecisions(List<MatchDecisionRecord> decisions) {
+        if (matchDecisionRepository == null || decisions.isEmpty()) {
+            return;
+        }
+        for (MatchDecisionRecord decision : decisions) {
+            try {
+                matchDecisionRepository.save(decision);
+            } catch (Exception e) {
+                log.warn("Failed to persist MatchDecision {}: {}", decision.getId(), e.getMessage());
+            }
+        }
     }
 
     /**
@@ -805,5 +920,26 @@ public class EntityResolutionService {
 
     public ReviewService getReviewService() {
         return reviewService;
+    }
+
+    public MatchDecisionRepository getMatchDecisionRepository() {
+        return matchDecisionRepository;
+    }
+
+    public ConfidenceDecayEngine getConfidenceDecayEngine() {
+        return confidenceDecayEngine;
+    }
+
+    /**
+     * Gets all match decisions involving a given entity (as input or candidate).
+     *
+     * @param entityId the entity ID
+     * @return list of match decision records, or empty if decision tracking is not enabled
+     */
+    public List<MatchDecisionRecord> getDecisionsForEntity(String entityId) {
+        if (matchDecisionRepository == null) {
+            return List.of();
+        }
+        return matchDecisionRepository.findByEntityId(entityId);
     }
 }

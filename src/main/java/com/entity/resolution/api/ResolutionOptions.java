@@ -19,6 +19,8 @@ public class ResolutionOptions {
     private static final int DEFAULT_CACHE_TTL_SECONDS = 300;
     private static final long DEFAULT_LOCK_TIMEOUT_MS = 5_000;
     private static final long DEFAULT_ASYNC_TIMEOUT_MS = 30_000;
+    private static final double DEFAULT_CONFIDENCE_DECAY_LAMBDA = 0.001;
+    private static final double DEFAULT_REINFORCEMENT_CAP = 0.15;
 
     private final boolean useLLM;
     private final double autoMergeThreshold;
@@ -39,6 +41,10 @@ public class ResolutionOptions {
     private final long lockTimeoutMs;
     private final long asyncTimeoutMs;
 
+    // Confidence decay options (v1.1)
+    private final double confidenceDecayLambda;
+    private final double reinforcementCap;
+
     private ResolutionOptions(Builder builder) {
         this.useLLM = builder.useLLM;
         this.autoMergeThreshold = builder.autoMergeThreshold;
@@ -56,6 +62,8 @@ public class ResolutionOptions {
         this.cacheTtlSeconds = builder.cacheTtlSeconds;
         this.lockTimeoutMs = builder.lockTimeoutMs;
         this.asyncTimeoutMs = builder.asyncTimeoutMs;
+        this.confidenceDecayLambda = builder.confidenceDecayLambda;
+        this.reinforcementCap = builder.reinforcementCap;
     }
 
     public boolean isUseLLM() {
@@ -122,6 +130,14 @@ public class ResolutionOptions {
         return asyncTimeoutMs;
     }
 
+    public double getConfidenceDecayLambda() {
+        return confidenceDecayLambda;
+    }
+
+    public double getReinforcementCap() {
+        return reinforcementCap;
+    }
+
     /**
      * Creates default options.
      */
@@ -169,6 +185,8 @@ public class ResolutionOptions {
         private int cacheTtlSeconds = DEFAULT_CACHE_TTL_SECONDS;
         private long lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS;
         private long asyncTimeoutMs = DEFAULT_ASYNC_TIMEOUT_MS;
+        private double confidenceDecayLambda = DEFAULT_CONFIDENCE_DECAY_LAMBDA;
+        private double reinforcementCap = DEFAULT_REINFORCEMENT_CAP;
 
         public Builder useLLM(boolean useLLM) {
             this.useLLM = useLLM;
@@ -275,6 +293,22 @@ public class ResolutionOptions {
             return this;
         }
 
+        public Builder confidenceDecayLambda(double confidenceDecayLambda) {
+            if (confidenceDecayLambda < 0.0) {
+                throw new IllegalArgumentException("confidenceDecayLambda must be non-negative");
+            }
+            this.confidenceDecayLambda = confidenceDecayLambda;
+            return this;
+        }
+
+        public Builder reinforcementCap(double reinforcementCap) {
+            if (reinforcementCap < 0.0 || reinforcementCap > 1.0) {
+                throw new IllegalArgumentException("reinforcementCap must be between 0.0 and 1.0");
+            }
+            this.reinforcementCap = reinforcementCap;
+            return this;
+        }
+
         public ResolutionOptions build() {
             // Validate threshold ordering
             if (autoMergeThreshold < synonymThreshold) {
@@ -313,6 +347,8 @@ public class ResolutionOptions {
                 ", cacheTtlSeconds=" + cacheTtlSeconds +
                 ", lockTimeoutMs=" + lockTimeoutMs +
                 ", asyncTimeoutMs=" + asyncTimeoutMs +
+                ", confidenceDecayLambda=" + confidenceDecayLambda +
+                ", reinforcementCap=" + reinforcementCap +
                 '}';
     }
 }

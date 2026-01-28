@@ -86,7 +86,9 @@ public class CypherExecutor {
                     normalizedValue: $normalizedValue,
                     source: $source,
                     confidence: $confidence,
-                    createdAt: datetime()
+                    createdAt: datetime(),
+                    lastConfirmedAt: datetime(),
+                    supportCount: 0
                 })
                 CREATE (s)-[:SYNONYM_OF]->(e)
                 """;
@@ -99,6 +101,33 @@ public class CypherExecutor {
                 "entityId", entityId
         ));
         log.debug("Created synonym '{}' for entity {}", value, entityId);
+    }
+
+    /**
+     * Reinforces a synonym by incrementing its support count and updating lastConfirmedAt.
+     */
+    public void reinforceSynonym(String synonymId) {
+        String query = """
+                MATCH (s:Synonym {id: $synonymId})
+                SET s.supportCount = COALESCE(s.supportCount, 0) + 1
+                SET s.lastConfirmedAt = datetime()
+                """;
+        connection.execute(query, Map.of("synonymId", synonymId));
+        log.debug("Reinforced synonym {}", synonymId);
+    }
+
+    /**
+     * Updates a synonym's confidence score.
+     */
+    public void updateSynonymConfidence(String synonymId, double newConfidence) {
+        String query = """
+                MATCH (s:Synonym {id: $synonymId})
+                SET s.confidence = $confidence
+                """;
+        connection.execute(query, Map.of(
+                "synonymId", synonymId,
+                "confidence", newConfidence
+        ));
     }
 
     // ========== PRD Section 8.3: Duplicate Entity Creation ==========
@@ -288,7 +317,8 @@ public class CypherExecutor {
         String query = """
                 MATCH (s:Synonym)-[:SYNONYM_OF]->(e:Entity {id: $entityId})
                 RETURN s.id as id, s.value as value, s.normalizedValue as normalizedValue,
-                       s.source as source, s.confidence as confidence, s.createdAt as createdAt
+                       s.source as source, s.confidence as confidence, s.createdAt as createdAt,
+                       s.lastConfirmedAt as lastConfirmedAt, s.supportCount as supportCount
                 """;
         return connection.query(query, Map.of("entityId", entityId));
     }

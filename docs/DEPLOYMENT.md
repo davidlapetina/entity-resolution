@@ -61,6 +61,8 @@ System.out.println("Status: " + health.status());
 | `useLLM` | boolean | false | Enable LLM-assisted enrichment |
 | `llmConfidenceThreshold` | double | 0.85 | LLM confidence threshold |
 | `sourceSystem` | String | "SYSTEM" | Source system identifier for audit |
+| `confidenceDecayLambda` | double | 0.001 | Exponential decay rate for synonym confidence (v1.1) |
+| `reinforcementCap` | double | 0.15 | Max confidence boost from support count (v1.1) |
 
 ### Batch Processing Options
 

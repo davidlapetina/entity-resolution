@@ -15,6 +15,8 @@ public class Synonym {
     private SynonymSource source;
     private double confidence;
     private Instant createdAt;
+    private Instant lastConfirmedAt;
+    private long supportCount;
 
     private Synonym(Builder builder) {
         this.id = builder.id != null ? builder.id : UUID.randomUUID().toString();
@@ -23,6 +25,8 @@ public class Synonym {
         this.source = builder.source;
         this.confidence = builder.confidence;
         this.createdAt = builder.createdAt != null ? builder.createdAt : Instant.now();
+        this.lastConfirmedAt = builder.lastConfirmedAt != null ? builder.lastConfirmedAt : this.createdAt;
+        this.supportCount = builder.supportCount;
     }
 
     public String getId() {
@@ -65,6 +69,30 @@ public class Synonym {
         return createdAt;
     }
 
+    public Instant getLastConfirmedAt() {
+        return lastConfirmedAt;
+    }
+
+    public void setLastConfirmedAt(Instant lastConfirmedAt) {
+        this.lastConfirmedAt = lastConfirmedAt;
+    }
+
+    public long getSupportCount() {
+        return supportCount;
+    }
+
+    public void setSupportCount(long supportCount) {
+        this.supportCount = supportCount;
+    }
+
+    /**
+     * Increments support count and updates last confirmed timestamp.
+     */
+    public void reinforce() {
+        this.supportCount++;
+        this.lastConfirmedAt = Instant.now();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -86,6 +114,7 @@ public class Synonym {
                 ", normalizedValue='" + normalizedValue + '\'' +
                 ", source=" + source +
                 ", confidence=" + confidence +
+                ", supportCount=" + supportCount +
                 '}';
     }
 
@@ -100,6 +129,8 @@ public class Synonym {
         private SynonymSource source = SynonymSource.SYSTEM;
         private double confidence = 1.0;
         private Instant createdAt;
+        private Instant lastConfirmedAt;
+        private long supportCount = 0;
 
         public Builder id(String id) {
             this.id = id;
@@ -128,6 +159,16 @@ public class Synonym {
 
         public Builder createdAt(Instant createdAt) {
             this.createdAt = createdAt;
+            return this;
+        }
+
+        public Builder lastConfirmedAt(Instant lastConfirmedAt) {
+            this.lastConfirmedAt = lastConfirmedAt;
+            return this;
+        }
+
+        public Builder supportCount(long supportCount) {
+            this.supportCount = supportCount;
             return this;
         }
 

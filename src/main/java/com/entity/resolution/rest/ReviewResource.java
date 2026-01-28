@@ -2,9 +2,12 @@ package com.entity.resolution.rest;
 
 import com.entity.resolution.api.Page;
 import com.entity.resolution.api.PageRequest;
+import com.entity.resolution.decision.ReviewDecision;
+import com.entity.resolution.decision.ReviewDecisionRepository;
 import com.entity.resolution.merge.MergeResult;
 import com.entity.resolution.rest.dto.ErrorResponse;
 import com.entity.resolution.rest.dto.ReviewDecisionRequest;
+import com.entity.resolution.rest.dto.ReviewDecisionResponse;
 import com.entity.resolution.rest.security.RequiresRole;
 import com.entity.resolution.rest.security.SecurityRole;
 import com.entity.resolution.review.ReviewItem;
@@ -221,6 +224,49 @@ public class ReviewResource {
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
                     .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
                             "/api/v1/reviews/" + reviewId + "/reject"))
+                    .build();
+        }
+    }
+
+    /**
+     * Gets the review decision for a specific review item.
+     *
+     * GET /api/v1/reviews/{id}/decision
+     */
+    @GET
+    @Path("/{id}/decision")
+    @RequiresRole(SecurityRole.READER)
+    @Operation(summary = "Get review decision",
+            description = "Returns the review decision (APPROVE/REJECT) for a specific review item, if one exists.")
+    @APIResponse(responseCode = "200", description = "Review decision found")
+    @APIResponse(responseCode = "404", description = "No decision found for this review")
+    public Response getReviewDecision(
+            @Parameter(description = "Review item ID") @PathParam("id") String reviewId) {
+        try {
+            ReviewDecisionRepository repo = reviewService.getReviewDecisionRepository();
+            if (repo == null) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(ErrorResponse.notFound(
+                                "Decision tracking is not enabled",
+                                "/api/v1/reviews/" + reviewId + "/decision"))
+                        .build();
+            }
+
+            ReviewDecision decision = repo.findLatestByReviewId(reviewId);
+            if (decision == null) {
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity(ErrorResponse.notFound(
+                                "No decision found for review: " + reviewId,
+                                "/api/v1/reviews/" + reviewId + "/decision"))
+                        .build();
+            }
+
+            return Response.ok(ReviewDecisionResponse.from(decision)).build();
+        } catch (Exception e) {
+            log.error("getReviewDecision.failed id={} error={}", reviewId, e.getMessage(), e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(ErrorResponse.internalError("An internal error occurred. Check server logs for details.",
+                            "/api/v1/reviews/" + reviewId + "/decision"))
                     .build();
         }
     }

@@ -6,6 +6,7 @@ import com.entity.resolution.core.model.SynonymSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -62,6 +63,20 @@ public class SynonymRepository {
         )).toList();
     }
 
+    /**
+     * Reinforces a synonym in the graph (increments supportCount, updates lastConfirmedAt).
+     */
+    public void reinforce(String synonymId) {
+        executor.reinforceSynonym(synonymId);
+    }
+
+    /**
+     * Updates a synonym's confidence score in the graph.
+     */
+    public void updateConfidence(String synonymId, double newConfidence) {
+        executor.updateSynonymConfidence(synonymId, newConfidence);
+    }
+
     private Synonym mapToSynonym(Map<String, Object> row) {
         Synonym.Builder builder = Synonym.builder()
                 .id((String) row.get("id"))
@@ -76,6 +91,20 @@ public class SynonymRepository {
         Object confidence = row.get("confidence");
         if (confidence != null) {
             builder.confidence(((Number) confidence).doubleValue());
+        }
+
+        Object lastConfirmedAt = row.get("lastConfirmedAt");
+        if (lastConfirmedAt instanceof String s && !s.isEmpty()) {
+            try {
+                builder.lastConfirmedAt(Instant.parse(s));
+            } catch (Exception ignored) {
+                // v1.0 data may not have this field
+            }
+        }
+
+        Object supportCount = row.get("supportCount");
+        if (supportCount != null) {
+            builder.supportCount(((Number) supportCount).longValue());
         }
 
         return builder.build();
