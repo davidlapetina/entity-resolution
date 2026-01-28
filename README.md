@@ -136,7 +136,7 @@ The architecture naturally extends to several high-value directions:
 <dependency>
     <groupId>com.entity.resolution</groupId>
     <artifactId>entity-resolution</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -157,7 +157,7 @@ Add the dependency to your Quarkus project:
 <dependency>
     <groupId>com.entity.resolution</groupId>
     <artifactId>entity-resolution</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 

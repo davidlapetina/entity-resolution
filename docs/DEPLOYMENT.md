@@ -32,7 +32,7 @@ docker exec -it <container_id> redis-cli PING
 <dependency>
     <groupId>com.entity.resolution</groupId>
     <artifactId>entity-resolution</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.1.0-SNAPSHOT</version>
 </dependency>
 ```
 
